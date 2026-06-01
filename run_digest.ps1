@@ -1,11 +1,6 @@
-# Run the AI news digest agent (for Windows Task Scheduler).
+# Run the AI news digest agent with uv (for Windows Task Scheduler).
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $python)) {
-    $python = "python"
-}
-
-& $python (Join-Path $PSScriptRoot "aggregator.py")
+uv run python (Join-Path $PSScriptRoot "aggregator.py")
 exit $LASTEXITCODE

@@ -14,19 +14,18 @@ This project runs locally on your laptop to gather the latest AI-related updates
 
 ## Prerequisites
 
-- Python 3.x
+- `uv` installed ([installation guide](https://docs.astral.sh/uv/getting-started/installation/))
 - A Gemini API key
 - SMTP access:
   - For Gmail: you typically need an **App Password** (after enabling 2FA)
 
 ## Setup
 
-### 1) Create a virtual environment and install dependencies
+### 1) Sync dependencies from `pyproject.toml`
 
 ```powershell
 cd c:\projects\agentic_emailer
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
+uv sync
 ```
 
 ### 2) Configure secrets (never commit these)
@@ -58,9 +57,9 @@ Example config notes are in `config.example.json`.
 From the repo directory:
 
 ```powershell
-python aggregator.py --gather-only
-python aggregator.py --dry-run
-python aggregator.py
+uv run python aggregator.py --gather-only
+uv run python aggregator.py --dry-run
+uv run python aggregator.py
 ```
 
 - `--gather-only`: fetch + print raw article list
@@ -83,7 +82,7 @@ Typical Task Scheduler setup:
    ```
 6. Start in: `c:\projects\agentic_emailer`
 
-The wrapper runs `aggregator.py` using the repo’s `.venv` if it exists.
+The wrapper runs `aggregator.py` through `uv run`.
 
 ## Project structure
 
@@ -91,6 +90,7 @@ The wrapper runs `aggregator.py` using the repo’s `.venv` if it exists.
 - `sources.py`: RSS + DuckDuckGo collection, dedupe, normalization (`Article`)
 - `summarizer.py`: Gemini digest generation (with fallback)
 - `emailer.py`: SMTP multipart email sender (text + HTML)
+- `pyproject.toml`: dependency and environment management for `uv`
 
 ## Gmail note (app passwords)
 
