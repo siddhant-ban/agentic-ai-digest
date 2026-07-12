@@ -1,0 +1,56 @@
+---
+description: Update AGENTIC_WORKFLOW.md with a change summary whenever committing to git
+alwaysApply: true
+---
+
+# Update Agentic Workflow Log on Commit
+
+When the user asks you to commit to git, update `AGENTIC_WORKFLOW.md` as part of the same commit workflow — not as a separate follow-up task.
+
+## When this applies
+
+- User explicitly requests a git commit
+- User rule or instructions include "commit these changes"
+
+Do **not** update the log for commits the user runs themselves outside Cursor.
+
+## Required workflow
+
+Integrate these steps into the existing commit protocol (after analyzing `git status` / `git diff` / `git log`, before `git commit`):
+
+1. **Draft the entry** from staged and unstaged changes:
+   - Heading: `### YYYY-MM-DD — <commit subject>`
+   - **Commit:** `(pending)` until the commit succeeds
+   - **Summary:** 1–3 sentences on what changed and why
+   - **Files:** key paths touched (not an exhaustive list for large diffs)
+   - **Context:** durable notes future agents need (decisions, gotchas, follow-ups)
+
+2. **Prepend the entry** under `## Change log`, directly after the "Newest entries first" line and before any existing `---` separator. Keep prior entries; do not rewrite history.
+
+3. **Update metadata** in the file header:
+   - `Last updated:` → today's date
+   - `Active focus:` → current work theme (one line)
+
+4. **Stage** `AGENTIC_WORKFLOW.md` together with the code changes in the same commit.
+
+5. **Commit** as usual.
+
+6. **After a successful commit**, replace `(pending)` with the actual short hash from `git log -1 --format=%h`, then amend that commit so the hash is included. Amend only when HEAD was created by you in this session and has not been pushed.
+
+## Entry format
+
+```markdown
+### 2026-07-12 — Short commit subject
+
+- **Commit:** `abc1234`
+- **Summary:** What changed and why, in plain language.
+- **Files:** `path/one.py`, `path/two.md`
+- **Context:** Decisions, risks, or next steps for future agent sessions.
+```
+
+## Quality bar
+
+- Write for a future agent with no chat history
+- Prefer why over what when both matter
+- Skip trivial entries only if the commit is truly empty (e.g. whitespace-only)
+- Never log secrets, API keys, or credentials
