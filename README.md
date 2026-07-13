@@ -30,13 +30,15 @@ uv sync
 
 ### 2) Configure secrets (never commit these)
 
-- Gemini key: `gemini_api_key.txt`
+- Gemini key:
+  - Preferred: `gemini_api_key.txt`
+  - Or set environment variable `GEMINI_API_KEY`
 - SMTP password:
   - Preferred: `smtp_password.txt`
   - Or set environment variable `EMAIL_PASSWORD`
 
 The code loads these in:
-- `aggregator.py` (`gemini_api_key.txt`, `smtp_password.txt` / `EMAIL_PASSWORD`)
+- `aggregator.py` (`GEMINI_API_KEY` / `gemini_api_key.txt`, `EMAIL_PASSWORD` / `smtp_password.txt`)
 - `emailer.py` uses the SMTP password as the argument to `server.login(...)`
 
 ## Configure topics and delivery
@@ -52,7 +54,7 @@ Edit `config.json`:
 
 Example config notes are in `config.example.json`.
 
-## Run locally (no scheduling yet)
+## Run locally
 
 From the repo directory:
 
@@ -83,6 +85,45 @@ Typical Task Scheduler setup:
 6. Start in: `c:\projects\agentic_emailer`
 
 The wrapper runs `aggregator.py` through `uv run`.
+
+## GitHub Actions
+
+The repo includes a scheduled workflow at `.github/workflows/digest.yml` that runs the digest daily at 12:00 UTC (plus manual triggers).
+
+### Required repository secrets
+
+Set these under **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Source |
+|--------|--------|
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) or your local `gemini_api_key.txt` |
+| `EMAIL_PASSWORD` | Gmail app password ([create one](https://myaccount.google.com/apppasswords) after enabling 2FA) |
+
+### CI config
+
+Non-secret settings live in `config.ci.json` (committed). The workflow runs:
+
+```powershell
+uv run python aggregator.py --config config.ci.json --dry-run
+```
+
+The workflow starts in `--dry-run` mode so you can validate Gemini without sending email. After a successful manual run, remove `--dry-run` from the workflow to enable live email delivery.
+
+### Manual trigger
+
+1. Open the **Actions** tab in GitHub
+2. Select **Daily AI Digest**
+3. Click **Run workflow**
+
+### Test locally with env vars (same as CI)
+
+```powershell
+$env:GEMINI_API_KEY = (Get-Content gemini_api_key.txt -Raw).Trim()
+$env:EMAIL_PASSWORD = (Get-Content smtp_password.txt -Raw).Trim()
+uv run python aggregator.py --config config.ci.json --dry-run
+```
+
+Local file-based setup (`gemini_api_key.txt`, `smtp_password.txt`, `config.json`) and Windows Task Scheduler continue to work unchanged. Environment variables take precedence over files when both are set.
 
 ## Project structure
 

@@ -12,11 +12,20 @@
 
 ## Active focus
 
-- Agentic workflow tracking established; ready for ongoing commit-time context updates
+- GitHub Actions scheduling with env-based secrets; workflow starts in `--dry-run` pending user secret setup and validation
 
 ## Change log
 
 Newest entries first. Each entry corresponds to one git commit.
+
+---
+
+### 2026-07-12 — Add GitHub Actions scheduling with env-based secrets
+
+- **Commit:** `(pending)`
+- **Summary:** Enabled `GEMINI_API_KEY` env var for CI while keeping local file fallback for Gemini and SMTP secrets. Added scheduled workflow, committed `config.ci.json`, and documented GitHub Actions setup in README.
+- **Files:** `aggregator.py`, `config.ci.json`, `.github/workflows/digest.yml`, `README.md`, `config.example.json`, `GITHUB_ACTIONS_CONTEXT.md`
+- **Context:** Workflow runs daily at 12:00 UTC with `--dry-run` until user configures `GEMINI_API_KEY` and `EMAIL_PASSWORD` repo secrets and removes `--dry-run`. Local file-based dev and Task Scheduler unchanged; env vars take precedence over files.
 
 ---
 

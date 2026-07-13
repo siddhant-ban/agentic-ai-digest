@@ -50,10 +50,10 @@ def load_secret_file(path: Path) -> str | None:
 
 
 def load_gemini_api_key() -> str:
-    key = load_secret_file(GEMINI_KEY_PATH)
+    key = os.environ.get("GEMINI_API_KEY") or load_secret_file(GEMINI_KEY_PATH)
     if not key:
         raise FileNotFoundError(
-            f"Gemini API key not found. Add it to {GEMINI_KEY_PATH.name}."
+            "Gemini API key not found. Set GEMINI_API_KEY or add gemini_api_key.txt."
         )
     return key
 

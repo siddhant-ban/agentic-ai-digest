@@ -22,7 +22,7 @@
     "subject_prefix": "[AI Digest]"
   },
   "_setup_notes": {
-    "secrets": "Store Gemini key in gemini_api_key.txt and Gmail app password in smtp_password.txt (or set EMAIL_PASSWORD env var).",
+    "secrets": "Store Gemini key in gemini_api_key.txt (or set GEMINI_API_KEY). Gmail app password in smtp_password.txt (or set EMAIL_PASSWORD).",
     "gmail": "Enable 2FA, then create an app password at https://myaccount.google.com/apppasswords",
     "install": "uv sync",
     "on_demand": "uv run python aggregator.py --dry-run",

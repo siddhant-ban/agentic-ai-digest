@@ -1,0 +1,30 @@
+{
+  "topics": [
+    "LLM model releases",
+    "AI agents and tool use",
+    "multimodal AI",
+    "AI Guardrail frameworks",
+    "Agentic frameworks",
+    "Agent harness engineering",
+    "AI Agentic development tools",
+    "AI Agentic development frameworks",
+    "AI Agentic development tools"
+  ],
+  "lookback_hours": 48,
+  "max_articles_per_source": 15,
+  "rss_feeds": [
+    {"name": "Google AI Blog", "url": "https://blog.google/technology/ai/rss/"},
+    {"name": "OpenAI News", "url": "https://openai.com/news/rss.xml"},
+    {"name": "Hugging Face Blog", "url": "https://huggingface.co/blog/feed.xml"},
+    {"name": "MIT Tech Review AI", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/"}
+  ],
+  "search_queries_per_topic": 2,
+  "gemini_model": "gemini-3.1-flash-lite",
+  "email": {
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "sender": "siddhantbanerjee1993@gmail.com",
+    "recipient": "siddhantban@gmail.com",
+    "subject_prefix": "[My custom AI Digest]"
+  }
+}
