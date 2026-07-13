@@ -1,11 +1,11 @@
 ---
-description: Update AGENTIC_WORKFLOW.md with a change summary whenever committing to git
+description: Update docs/AGENTIC_WORKFLOW.md with a change summary whenever committing to git
 alwaysApply: true
 ---
 
 # Update Agentic Workflow Log on Commit
 
-When the user asks you to commit to git, update `AGENTIC_WORKFLOW.md` as part of the same commit workflow — not as a separate follow-up task.
+When the user asks you to commit to git, update `AGENTIC_WORKFLOW.md` in the `docs` folder as part of the same commit workflow — not as a separate follow-up task.
 
 ## When this applies
 
