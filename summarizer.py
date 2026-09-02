@@ -14,11 +14,13 @@ from sources import Article
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_INSTRUCTION = """You are an AI news analyst producing a concise daily digest.
+def _build_system_instruction(topics: list[str]) -> str:
+    topic_str = ", ".join(topics) if topics else "the user's interests"
+    return f"""You are a digest curator covering: {topic_str}.
 
 Rules:
-- Only summarize articles explicitly provided in the input list.
-- Do not invent news, sources, or URLs.
+- Only summarize items explicitly provided in the input list.
+- Do not invent content, sources, or URLs.
 - Group highlights by the user's topics where possible.
 - For each highlight, include the source name and URL from the input.
 - Be concise but informative; prefer bullet points over long paragraphs.
@@ -32,25 +34,36 @@ RETRY_DELAY_SECONDS = 3.0
 def _build_prompt(articles: list[Article], topics: list[str]) -> str:
     topic_list = "\n".join(f"- {topic}" for topic in topics)
     article_blocks = "\n\n".join(article.to_prompt_block() for article in articles)
-    return f"""Create an AI news digest from the articles below.
+    return f"""Create a digest from the items below.
 
 User topics of interest:
 {topic_list}
 
-Articles ({len(articles)} total):
+Items ({len(articles)} total):
 {article_blocks}
 
 Output structure:
 1. Executive Summary (2-3 sentences)
 2. Highlights by Topic (bullets with title, brief summary, source, URL)
-3. Worth Watching (optional short list of emerging themes)
+3. Notable Trends (optional short list of emerging patterns or themes)
 
-Use only the articles above. Include URLs for every highlight."""
+Use only the items above. Include URLs for every highlight."""
+
+
+def _digest_title(topics: list[str]) -> str:
+    """Build a human-readable digest title from the topic list."""
+    if not topics:
+        return "Daily Digest"
+    # Use up to 3 topics joined with " & " to keep the title concise
+    joined = " & ".join(topics[:3])
+    suffix = " & more" if len(topics) > 3 else ""
+    return f"{joined}{suffix} Digest"
 
 
 def _fallback_digest(articles: list[Article], topics: list[str]) -> str:
+    title = _digest_title(topics)
     lines = [
-        "# AI News Digest (Fallback)",
+        f"# {title} (Fallback)",
         "",
         "Gemini summarization was unavailable. Raw article list:",
         "",
@@ -83,9 +96,10 @@ def build_digest(
     model: str,
 ) -> tuple[str, str]:
     if not articles:
+        title = _digest_title(topics)
         md = (
-            "# AI News Digest\n\n"
-            "No new articles were found for your topics in the configured lookback window."
+            f"# {title}\n\n"
+            "No new items were found for your topics in the configured lookback window."
         )
         return md, markdown.markdown(md)
 
@@ -99,7 +113,7 @@ def build_digest(
                 model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
+                    system_instruction=_build_system_instruction(topics),
                     temperature=0.3,
                 ),
             )
