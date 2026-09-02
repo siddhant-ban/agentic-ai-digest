@@ -35,27 +35,26 @@ def test_load_config_missing_file(tmp_path: Path):
         load_config(missing_file)
 
 
-def test_discover_recipients_with_directory(tmp_path: Path, sample_config):
+def test_discover_recipients_with_file(tmp_path: Path, sample_config):
     config_file = tmp_path / "config.json"
     config_file.write_text(json.dumps(sample_config), encoding="utf-8")
 
-    rec_dir = tmp_path / "recipients"
-    rec_dir.mkdir()
-
-    (rec_dir / "user1.json").write_text(
-        json.dumps({
-            "email_address": "user1@example.com",
-            "topics": ["AI Research"],
-            "enabled": True,
-        }),
-        encoding="utf-8",
-    )
-    (rec_dir / "user2.json").write_text(
-        json.dumps({
-            "email_address": "user2@example.com",
-            "topics": ["Robotics"],
-            "enabled": False,
-        }),
+    rec_file = tmp_path / "recipients.json"
+    rec_file.write_text(
+        json.dumps([
+            {
+                "id": "user1",
+                "email_address": "user1@example.com",
+                "topics": ["AI Research"],
+                "enabled": True,
+            },
+            {
+                "id": "user2",
+                "email_address": "user2@example.com",
+                "topics": ["Robotics"],
+                "enabled": False,
+            },
+        ]),
         encoding="utf-8",
     )
 
@@ -66,17 +65,28 @@ def test_discover_recipients_with_directory(tmp_path: Path, sample_config):
     assert profiles[0]["topics"] == ["AI Research"]
 
 
+def test_discover_recipients_with_env_var(monkeypatch, tmp_path: Path, sample_config):
+    config_file = tmp_path / "config.json"
+    env_data = json.dumps([
+        {"id": "env_user", "email_address": "envuser@example.com", "topics": ["LLMs"]},
+        {"id": "disabled_user", "email_address": "disabled@example.com", "enabled": False},
+    ])
+    monkeypatch.setenv("RECIPIENTS_JSON", env_data)
+
+    profiles = discover_recipients(config_file, sample_config)
+    assert len(profiles) == 1
+    assert profiles[0]["id"] == "env_user"
+    assert profiles[0]["email_address"] == "envuser@example.com"
+
+
 def test_discover_recipients_filter(tmp_path: Path, sample_config):
     config_file = tmp_path / "config.json"
-    rec_dir = tmp_path / "recipients"
-    rec_dir.mkdir()
-
-    (rec_dir / "alice.json").write_text(
-        json.dumps({"email_address": "alice@example.com", "topics": ["AI"]}),
-        encoding="utf-8",
-    )
-    (rec_dir / "bob.json").write_text(
-        json.dumps({"email_address": "bob@example.com", "topics": ["Robotics"]}),
+    rec_file = tmp_path / "recipients.json"
+    rec_file.write_text(
+        json.dumps([
+            {"id": "alice", "email_address": "alice@example.com", "topics": ["AI"]},
+            {"id": "bob", "email_address": "bob@example.com", "topics": ["Robotics"]},
+        ]),
         encoding="utf-8",
     )
 
@@ -97,6 +107,7 @@ def test_discover_recipients_fallback(tmp_path: Path, sample_config):
     profiles = discover_recipients(config_file, sample_config)
     assert len(profiles) == 1
     assert profiles[0]["email_address"] == sample_config["email"]["recipient"]
+
 
 
 def test_load_secret_file(tmp_path: Path):
@@ -211,15 +222,12 @@ def test_aggregator_multi_recipient_run(
     mock_gather, mock_key, mock_build, mock_smtp_pass, mock_send, tmp_path: Path, sample_config, sample_articles
 ):
     config_file = tmp_path / "config.json"
-    rec_dir = tmp_path / "recipients"
-    rec_dir.mkdir()
-
-    (rec_dir / "user_a.json").write_text(
-        json.dumps({"email_address": "usera@example.com", "topics": ["Artificial Intelligence"]}),
-        encoding="utf-8",
-    )
-    (rec_dir / "user_b.json").write_text(
-        json.dumps({"email_address": "userb@example.com", "topics": ["LLMs"]}),
+    rec_file = tmp_path / "recipients.json"
+    rec_file.write_text(
+        json.dumps([
+            {"id": "user_a", "email_address": "usera@example.com", "topics": ["Artificial Intelligence"]},
+            {"id": "user_b", "email_address": "userb@example.com", "topics": ["LLMs"]},
+        ]),
         encoding="utf-8",
     )
 
@@ -267,15 +275,12 @@ def test_is_valid_email():
 
 def test_discover_recipients_invalid_email(tmp_path: Path, sample_config):
     config_file = tmp_path / "config.json"
-    rec_dir = tmp_path / "recipients"
-    rec_dir.mkdir()
-
-    (rec_dir / "bad_email.json").write_text(
-        json.dumps({"email_address": "not_an_email", "topics": ["AI"]}),
-        encoding="utf-8",
-    )
-    (rec_dir / "good_email.json").write_text(
-        json.dumps({"email_address": "good@example.com", "topics": ["AI"]}),
+    rec_file = tmp_path / "recipients.json"
+    rec_file.write_text(
+        json.dumps([
+            {"id": "bad_email", "email_address": "not_an_email", "topics": ["AI"]},
+            {"id": "good_email", "email_address": "good@example.com", "topics": ["AI"]},
+        ]),
         encoding="utf-8",
     )
 
@@ -294,15 +299,12 @@ def test_aggregator_send_digest_isolated_errors(
     mock_gather, mock_key, mock_build, mock_smtp_pass, mock_send, tmp_path: Path, sample_config, sample_articles
 ):
     config_file = tmp_path / "config.json"
-    rec_dir = tmp_path / "recipients"
-    rec_dir.mkdir()
-
-    (rec_dir / "user_fail.json").write_text(
-        json.dumps({"email_address": "fail@example.com", "topics": ["AI"]}),
-        encoding="utf-8",
-    )
-    (rec_dir / "user_ok.json").write_text(
-        json.dumps({"email_address": "ok@example.com", "topics": ["AI"]}),
+    rec_file = tmp_path / "recipients.json"
+    rec_file.write_text(
+        json.dumps([
+            {"id": "user_fail", "email_address": "fail@example.com", "topics": ["AI"]},
+            {"id": "user_ok", "email_address": "ok@example.com", "topics": ["AI"]},
+        ]),
         encoding="utf-8",
     )
 
@@ -313,4 +315,5 @@ def test_aggregator_send_digest_isolated_errors(
     aggregator(sample_config, config_path=config_file)
 
     assert mock_send.call_count == 2
+
 

@@ -49,76 +49,103 @@ def load_config(config_path: Path) -> dict[str, Any]:
     return config
 
 
+def parse_recipient_raw(
+    raw: dict[str, Any],
+    global_config: dict[str, Any],
+    default_id: str = "recipient",
+) -> dict[str, Any] | None:
+    if raw.get("enabled") is False:
+        logger.info("Skipping disabled recipient profile: %s", raw.get("id") or default_id)
+        return None
+
+    profile_id = str(raw.get("id") or default_id)
+    recipient_email = (
+        raw.get("email_address")
+        or raw.get("recipient_email")
+        or (raw.get("email") if isinstance(raw.get("email"), str) else None)
+        or (raw.get("email", {}) if isinstance(raw.get("email"), dict) else {}).get("recipient")
+    )
+
+    if not recipient_email:
+        logger.warning("Recipient profile %s is missing an email address", profile_id)
+        return None
+
+    if not is_valid_email(recipient_email):
+        logger.warning("Recipient profile %s has an invalid email address: %s", profile_id, recipient_email)
+        return None
+
+    topics = raw.get("topics") or global_config.get("topics") or []
+    rss_feeds = raw.get("rss_feeds") or global_config.get("rss_feeds") or []
+    subject_prefix = (
+        raw.get("subject_prefix")
+        or (raw.get("email", {}) if isinstance(raw.get("email"), dict) else {}).get("subject_prefix")
+        or global_config.get("email", {}).get("subject_prefix", "[AI Digest]")
+    )
+
+    email_config = {
+        "smtp_host": global_config.get("email", {}).get("smtp_host", "smtp.gmail.com"),
+        "smtp_port": global_config.get("email", {}).get("smtp_port", 587),
+        "sender": global_config.get("email", {}).get("sender", ""),
+        "recipient": recipient_email,
+        "subject_prefix": subject_prefix,
+    }
+
+    return {
+        "id": profile_id,
+        "email_address": recipient_email,
+        "topics": topics,
+        "rss_feeds": rss_feeds,
+        "lookback_hours": raw.get("lookback_hours") or global_config.get("lookback_hours", 48),
+        "gemini_model": raw.get("gemini_model") or global_config.get("gemini_model", "gemini-2.0-flash"),
+        "email": email_config,
+    }
+
+
 def discover_recipients(
     config_path: Path,
     global_config: dict[str, Any],
     recipient_filter: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Discover recipient profiles from a `recipients/` directory or fall back to single-recipient config."""
-    recipients_dir = config_path.parent / "recipients"
+    """Discover recipient profiles from RECIPIENTS_JSON env var, `recipients.json` file, or global config fallback."""
     profiles: list[dict[str, Any]] = []
 
-    if recipients_dir.exists() and recipients_dir.is_dir():
-        for file in sorted(recipients_dir.glob("*.json")):
+    # 1. Check RECIPIENTS_JSON environment variable (CI secret injection)
+    env_recipients = os.environ.get("RECIPIENTS_JSON")
+    if env_recipients and env_recipients.strip():
+        try:
+            parsed_env = json.loads(env_recipients)
+            items = parsed_env if isinstance(parsed_env, list) else [parsed_env]
+            for idx, item in enumerate(items, start=1):
+                p = parse_recipient_raw(item, global_config, default_id=f"env_profile_{idx}")
+                if p:
+                    profiles.append(p)
+        except Exception as exc:
+            logger.warning("Could not parse RECIPIENTS_JSON environment variable: %s", exc)
+
+    # 2. Check recipients.json single file if no env profiles found
+    if not profiles:
+        recipients_file = config_path.parent / "recipients.json"
+        if recipients_file.exists() and recipients_file.is_file():
             try:
-                with file.open(encoding="utf-8") as f:
+                with recipients_file.open(encoding="utf-8") as f:
                     data = json.load(f)
+                items = data if isinstance(data, list) else [data]
+                for idx, item in enumerate(items, start=1):
+                    p = parse_recipient_raw(item, global_config, default_id=f"profile_{idx}")
+                    if p:
+                        profiles.append(p)
             except Exception as exc:
-                logger.warning("Could not parse recipient file %s: %s", file, exc)
-                continue
+                logger.warning("Could not parse %s: %s", recipients_file, exc)
 
-            if data.get("enabled") is False:
-                logger.info("Skipping disabled recipient profile: %s", file.name)
-                continue
-
-            profile_id = file.stem
-            recipient_email = (
-                data.get("email_address")
-                or data.get("recipient_email")
-                or (data.get("email") if isinstance(data.get("email"), str) else None)
-                or (data.get("email", {}) if isinstance(data.get("email"), dict) else {}).get("recipient")
-            )
-
-            if not recipient_email:
-                logger.warning("Recipient profile %s is missing an email address", file.name)
-                continue
-
-            if not is_valid_email(recipient_email):
-                logger.warning("Recipient profile %s has an invalid email address: %s", file.name, recipient_email)
-                continue
-
-            topics = data.get("topics") or global_config.get("topics") or []
-            rss_feeds = data.get("rss_feeds") or global_config.get("rss_feeds") or []
-            subject_prefix = (
-                data.get("subject_prefix")
-                or (data.get("email", {}) if isinstance(data.get("email"), dict) else {}).get("subject_prefix")
-                or global_config.get("email", {}).get("subject_prefix", "[AI Digest]")
-            )
-
-            email_config = {
-                "smtp_host": global_config.get("email", {}).get("smtp_host", "smtp.gmail.com"),
-                "smtp_port": global_config.get("email", {}).get("smtp_port", 587),
-                "sender": global_config.get("email", {}).get("sender", ""),
-                "recipient": recipient_email,
-                "subject_prefix": subject_prefix,
-            }
-
-            profile = {
-                "id": profile_id,
-                "email_address": recipient_email,
-                "topics": topics,
-                "rss_feeds": rss_feeds,
-                "lookback_hours": data.get("lookback_hours") or global_config.get("lookback_hours", 48),
-                "gemini_model": data.get("gemini_model") or global_config.get("gemini_model", "gemini-2.0-flash"),
-                "email": email_config,
-            }
-            profiles.append(profile)
-
-
+    # 3. Fallback to single recipient in global_config
     if not profiles:
         email_section = global_config.get("email", {})
         recipient_email = email_section.get("recipient")
         topics = global_config.get("topics", [])
+        if recipient_email and not is_valid_email(recipient_email):
+            logger.warning("Global config has an invalid recipient email address: %s", recipient_email)
+            recipient_email = None
+
         if recipient_email or topics:
             profiles.append(
                 {
@@ -141,6 +168,7 @@ def discover_recipients(
         ]
 
     return profiles
+
 
 
 def load_secret_file(path: Path) -> str | None:

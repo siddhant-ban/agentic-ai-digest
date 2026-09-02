@@ -1,0 +1,35 @@
+[
+  {
+    "id": "alice",
+    "email_address": "alice@example.com",
+    "subject_prefix": "[Alice's AI Digest]",
+    "enabled": true,
+    "topics": [
+      "LLM model releases",
+      "AI agents and tool use",
+      "multimodal AI"
+    ],
+    "rss_feeds": [
+      {
+        "name": "MIT Tech Review AI",
+        "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/"
+      }
+    ]
+  },
+  {
+    "id": "bob",
+    "email_address": "bob@example.com",
+    "subject_prefix": "[Bob's Robotics Digest]",
+    "enabled": false,
+    "topics": [
+      "Robotics",
+      "Computer Vision"
+    ],
+    "rss_feeds": [
+      {
+        "name": "Ars Technica Tech",
+        "url": "https://feeds.arstechnica.com/arstechnica/technology-lab"
+      }
+    ]
+  }
+]

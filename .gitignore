@@ -223,3 +223,4 @@ __marimo__/
 gemini_api_key.txt
 smtp_password.txt
 config.json
+recipients.json

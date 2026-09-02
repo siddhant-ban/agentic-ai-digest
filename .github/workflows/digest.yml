@@ -26,4 +26,6 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          RECIPIENTS_JSON: ${{ secrets.RECIPIENTS_JSON }}
         run: uv run python aggregator.py --config config.ci.json
+
