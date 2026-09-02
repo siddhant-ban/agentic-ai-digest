@@ -1,0 +1,15 @@
+{
+  "email_address": "bob@example.com",
+  "subject_prefix": "[Bob's Robotics & Vision Digest]",
+  "enabled": false,
+  "topics": [
+    "Robotics",
+    "Computer Vision"
+  ],
+  "rss_feeds": [
+    {
+      "name": "Ars Technica Tech",
+      "url": "https://feeds.arstechnica.com/arstechnica/technology-lab"
+    }
+  ]
+}

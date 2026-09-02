@@ -16,8 +16,10 @@ from sources import (
     _parse_published,
     _topic_keywords,
     _within_lookback,
+    filter_articles_for_recipient,
     gather_all,
 )
+
 
 
 def test_article_to_prompt_block():
@@ -208,3 +210,28 @@ def test_gather_all(mock_search, mock_rss, sample_config, sample_articles):
     assert len(result) == 2
     assert mock_rss.called
     assert mock_search.called
+
+
+def test_filter_articles_for_recipient(sample_articles):
+    now = datetime.now(timezone.utc)
+    a_rss = Article(
+        title="Unrelated Topic Header",
+        url="https://example.com/rss",
+        source="Custom Feed",
+        published_at=now,
+        snippet="Snippet",
+    )
+    all_articles = sample_articles + [a_rss]
+
+    recipient_config = {
+        "topics": ["LLM"],
+        "rss_feeds": [{"name": "Custom Feed", "url": "https://example.com/feed"}],
+    }
+
+    filtered = filter_articles_for_recipient(all_articles, recipient_config)
+    # Should include sample_articles[1] (matches topic LLM) and a_rss (matches source Custom Feed)
+    assert len(filtered) == 2
+    titles = [a.title for a in filtered]
+    assert "Open Source LLM Benchmark Breakthrough" in titles
+    assert "Unrelated Topic Header" in titles
+

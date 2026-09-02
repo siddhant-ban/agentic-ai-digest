@@ -6,13 +6,25 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
+
 from emailer import send_digest
-from sources import Article, gather_all
+from sources import Article, filter_articles_for_recipient, gather_all
 from summarizer import build_digest
+
+EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+
+
+def is_valid_email(email: str) -> bool:
+    """Validate email address format."""
+    if not isinstance(email, str):
+        return False
+    return bool(EMAIL_REGEX.match(email.strip()))
+
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config.json"
@@ -34,12 +46,101 @@ def load_config(config_path: Path) -> dict[str, Any]:
     with config_path.open(encoding="utf-8") as f:
         config = json.load(f)
 
-    if not config.get("topics"):
-        raise ValueError("Config must include at least one topic in 'topics'.")
-    if not config.get("email"):
-        raise ValueError("Config must include an 'email' section.")
-
     return config
+
+
+def discover_recipients(
+    config_path: Path,
+    global_config: dict[str, Any],
+    recipient_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    """Discover recipient profiles from a `recipients/` directory or fall back to single-recipient config."""
+    recipients_dir = config_path.parent / "recipients"
+    profiles: list[dict[str, Any]] = []
+
+    if recipients_dir.exists() and recipients_dir.is_dir():
+        for file in sorted(recipients_dir.glob("*.json")):
+            try:
+                with file.open(encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as exc:
+                logger.warning("Could not parse recipient file %s: %s", file, exc)
+                continue
+
+            if data.get("enabled") is False:
+                logger.info("Skipping disabled recipient profile: %s", file.name)
+                continue
+
+            profile_id = file.stem
+            recipient_email = (
+                data.get("email_address")
+                or data.get("recipient_email")
+                or (data.get("email") if isinstance(data.get("email"), str) else None)
+                or (data.get("email", {}) if isinstance(data.get("email"), dict) else {}).get("recipient")
+            )
+
+            if not recipient_email:
+                logger.warning("Recipient profile %s is missing an email address", file.name)
+                continue
+
+            if not is_valid_email(recipient_email):
+                logger.warning("Recipient profile %s has an invalid email address: %s", file.name, recipient_email)
+                continue
+
+            topics = data.get("topics") or global_config.get("topics") or []
+            rss_feeds = data.get("rss_feeds") or global_config.get("rss_feeds") or []
+            subject_prefix = (
+                data.get("subject_prefix")
+                or (data.get("email", {}) if isinstance(data.get("email"), dict) else {}).get("subject_prefix")
+                or global_config.get("email", {}).get("subject_prefix", "[AI Digest]")
+            )
+
+            email_config = {
+                "smtp_host": global_config.get("email", {}).get("smtp_host", "smtp.gmail.com"),
+                "smtp_port": global_config.get("email", {}).get("smtp_port", 587),
+                "sender": global_config.get("email", {}).get("sender", ""),
+                "recipient": recipient_email,
+                "subject_prefix": subject_prefix,
+            }
+
+            profile = {
+                "id": profile_id,
+                "email_address": recipient_email,
+                "topics": topics,
+                "rss_feeds": rss_feeds,
+                "lookback_hours": data.get("lookback_hours") or global_config.get("lookback_hours", 48),
+                "gemini_model": data.get("gemini_model") or global_config.get("gemini_model", "gemini-2.0-flash"),
+                "email": email_config,
+            }
+            profiles.append(profile)
+
+
+    if not profiles:
+        email_section = global_config.get("email", {})
+        recipient_email = email_section.get("recipient")
+        topics = global_config.get("topics", [])
+        if recipient_email or topics:
+            profiles.append(
+                {
+                    "id": "default",
+                    "email_address": recipient_email or "default@example.com",
+                    "topics": topics,
+                    "rss_feeds": global_config.get("rss_feeds", []),
+                    "lookback_hours": global_config.get("lookback_hours", 48),
+                    "gemini_model": global_config.get("gemini_model", "gemini-2.0-flash"),
+                    "email": email_section,
+                }
+            )
+
+    if recipient_filter:
+        target = recipient_filter.lower()
+        profiles = [
+            p
+            for p in profiles
+            if p["email_address"].lower() == target or p["id"].lower() == target
+        ]
+
+    return profiles
 
 
 def load_secret_file(path: Path) -> str | None:
@@ -88,42 +189,97 @@ def format_articles_for_console(articles: list[Article]) -> str:
     return "\n".join(lines)
 
 
+def safe_print(text: str) -> None:
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
+        encoded = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        print(encoded)
+
+
 def aggregator(
     config: dict[str, Any],
     *,
     dry_run: bool = False,
     gather_only: bool = False,
+    recipient: str | None = None,
+    config_path: Path | None = None,
 ) -> str:
-    topics: list[str] = config["topics"]
-    model = config.get("gemini_model", "gemini-2.0-flash")
+    effective_config_path = config_path or DEFAULT_CONFIG_PATH
+    profiles = discover_recipients(effective_config_path, config, recipient_filter=recipient)
 
-    logger.info("Gathering articles for topics: %s", ", ".join(topics))
-    articles = gather_all(config)
-    logger.info("Gathered %d unique article(s)", len(articles))
+    if not profiles:
+        logger.warning("No active recipient profiles found to process.")
+        return "No recipient profiles to process."
 
-    if gather_only:
-        output = format_articles_for_console(articles)
-        print(output)
-        return output
+    combined_topics: set[str] = set()
+    combined_feeds: list[dict[str, Any]] = []
+    seen_feed_urls: set[str] = set()
 
-    api_key = load_gemini_api_key()
-    logger.info("Summarizing with Gemini model: %s", model)
-    digest_md, digest_html = build_digest(articles, topics, api_key, model)
+    for p in profiles:
+        combined_topics.update(p["topics"])
+        for feed in p["rss_feeds"]:
+            feed_url = feed.get("url")
+            if feed_url and feed_url not in seen_feed_urls:
+                seen_feed_urls.add(feed_url)
+                combined_feeds.append(feed)
 
-    if dry_run:
-        print(digest_md)
-        return digest_md
+    global_gather_config = {
+        "topics": list(combined_topics),
+        "rss_feeds": combined_feeds,
+        "lookback_hours": max((p["lookback_hours"] for p in profiles), default=48),
+        "max_articles_per_source": config.get("max_articles_per_source", 15),
+        "search_queries_per_topic": config.get("search_queries_per_topic", 2),
+    }
 
-    smtp_password = load_smtp_password()
-    send_digest(
-        config["email"],
-        digest_md,
-        digest_html,
-        smtp_password,
-        article_count=len(articles),
-        topic_count=len(topics),
-    )
-    return digest_md
+    logger.info("Gathering global articles across %d recipient profile(s)...", len(profiles))
+    global_articles = gather_all(global_gather_config)
+    logger.info("Gathered %d unique global article(s)", len(global_articles))
+
+    outputs: list[str] = []
+
+    api_key = None if gather_only else load_gemini_api_key()
+    smtp_password = None if (gather_only or dry_run) else load_smtp_password()
+
+    for profile in profiles:
+        recipient_email = profile["email_address"]
+        logger.info("Processing recipient: %s (%s)", recipient_email, profile["id"])
+        recipient_articles = filter_articles_for_recipient(global_articles, profile)
+
+        if gather_only:
+            header = f"=== Recipient: {recipient_email} ({profile['id']}) ==="
+            output = f"{header}\n" + format_articles_for_console(recipient_articles)
+            safe_print(output)
+            outputs.append(output)
+            continue
+
+        model = profile["gemini_model"]
+        digest_md, digest_html = build_digest(recipient_articles, profile["topics"], api_key, model)
+
+        if dry_run:
+            header = f"=== Recipient: {recipient_email} ({profile['id']}) ==="
+            output = f"{header}\n" + digest_md
+            safe_print(output)
+            outputs.append(digest_md)
+            continue
+
+        try:
+            send_digest(
+                profile["email"],
+                digest_md,
+                digest_html,
+                smtp_password,
+                article_count=len(recipient_articles),
+                topic_count=len(profile["topics"]),
+            )
+            outputs.append(digest_md)
+        except Exception as exc:
+            logger.error("Failed to send digest email to %s (%s): %s", recipient_email, profile["id"], exc)
+
+    return "\n\n".join(outputs)
+
+
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -146,6 +302,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Gather articles only and print the raw list",
     )
+    parser.add_argument(
+        "--recipient",
+        type=str,
+        default=None,
+        help="Filter run to specific recipient email or profile ID",
+    )
     return parser.parse_args(argv)
 
 
@@ -157,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
             config,
             dry_run=args.dry_run,
             gather_only=args.gather_only,
+            recipient=args.recipient,
+            config_path=args.config,
         )
         return 0
     except Exception as exc:
@@ -166,3 +330,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

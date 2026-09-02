@@ -1,0 +1,16 @@
+{
+  "email_address": "alice@example.com",
+  "subject_prefix": "[Alice's AI & LLM Digest]",
+  "enabled": false,
+  "topics": [
+    "LLMs",
+    "AI Agents",
+    "Reasoning Models"
+  ],
+  "rss_feeds": [
+    {
+      "name": "MIT Tech Review AI",
+      "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/"
+    }
+  ]
+}

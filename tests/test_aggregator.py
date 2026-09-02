@@ -7,7 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aggregator import (
     aggregator,
+    discover_recipients,
     format_articles_for_console,
+    is_valid_email,
     load_config,
     load_gemini_api_key,
     load_secret_file,
@@ -15,6 +17,7 @@ from aggregator import (
     main,
     parse_args,
 )
+
 
 
 def test_load_config_valid(tmp_path: Path, sample_config):
@@ -32,16 +35,68 @@ def test_load_config_missing_file(tmp_path: Path):
         load_config(missing_file)
 
 
-def test_load_config_invalid_schema(tmp_path: Path):
-    no_topics = tmp_path / "no_topics.json"
-    no_topics.write_text(json.dumps({"email": {"sender": "a"}}), encoding="utf-8")
-    with pytest.raises(ValueError, match="must include at least one topic"):
-        load_config(no_topics)
+def test_discover_recipients_with_directory(tmp_path: Path, sample_config):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(sample_config), encoding="utf-8")
 
-    no_email = tmp_path / "no_email.json"
-    no_email.write_text(json.dumps({"topics": ["AI"]}), encoding="utf-8")
-    with pytest.raises(ValueError, match="must include an 'email' section"):
-        load_config(no_email)
+    rec_dir = tmp_path / "recipients"
+    rec_dir.mkdir()
+
+    (rec_dir / "user1.json").write_text(
+        json.dumps({
+            "email_address": "user1@example.com",
+            "topics": ["AI Research"],
+            "enabled": True,
+        }),
+        encoding="utf-8",
+    )
+    (rec_dir / "user2.json").write_text(
+        json.dumps({
+            "email_address": "user2@example.com",
+            "topics": ["Robotics"],
+            "enabled": False,
+        }),
+        encoding="utf-8",
+    )
+
+    profiles = discover_recipients(config_file, sample_config)
+    assert len(profiles) == 1
+    assert profiles[0]["id"] == "user1"
+    assert profiles[0]["email_address"] == "user1@example.com"
+    assert profiles[0]["topics"] == ["AI Research"]
+
+
+def test_discover_recipients_filter(tmp_path: Path, sample_config):
+    config_file = tmp_path / "config.json"
+    rec_dir = tmp_path / "recipients"
+    rec_dir.mkdir()
+
+    (rec_dir / "alice.json").write_text(
+        json.dumps({"email_address": "alice@example.com", "topics": ["AI"]}),
+        encoding="utf-8",
+    )
+    (rec_dir / "bob.json").write_text(
+        json.dumps({"email_address": "bob@example.com", "topics": ["Robotics"]}),
+        encoding="utf-8",
+    )
+
+    profiles_all = discover_recipients(config_file, sample_config)
+    assert len(profiles_all) == 2
+
+    profiles_alice = discover_recipients(config_file, sample_config, recipient_filter="alice@example.com")
+    assert len(profiles_alice) == 1
+    assert profiles_alice[0]["id"] == "alice"
+
+    profiles_bob_id = discover_recipients(config_file, sample_config, recipient_filter="bob")
+    assert len(profiles_bob_id) == 1
+    assert profiles_bob_id[0]["id"] == "bob"
+
+
+def test_discover_recipients_fallback(tmp_path: Path, sample_config):
+    config_file = tmp_path / "config.json"
+    profiles = discover_recipients(config_file, sample_config)
+    assert len(profiles) == 1
+    assert profiles[0]["email_address"] == sample_config["email"]["recipient"]
 
 
 def test_load_secret_file(tmp_path: Path):
@@ -98,9 +153,11 @@ def test_format_articles_for_console(sample_articles):
 
 
 @patch("aggregator.gather_all")
-def test_aggregator_gather_only(mock_gather, sample_config, sample_articles):
+def test_aggregator_gather_only(mock_gather, tmp_path: Path, sample_config, sample_articles):
     mock_gather.return_value = sample_articles
-    result = aggregator(sample_config, gather_only=True)
+    config_file = tmp_path / "config.json"
+    result = aggregator(sample_config, config_path=config_file, gather_only=True)
+    assert "=== Recipient: recipient@example.com (default) ===" in result
     assert "Found 2 article(s):" in result
 
 
@@ -110,13 +167,14 @@ def test_aggregator_gather_only(mock_gather, sample_config, sample_articles):
 @patch("aggregator.load_gemini_api_key", return_value="gemini-key")
 @patch("aggregator.gather_all")
 def test_aggregator_dry_run(
-    mock_gather, mock_key, mock_build, mock_smtp_pass, mock_send, sample_config, sample_articles
+    mock_gather, mock_key, mock_build, mock_smtp_pass, mock_send, tmp_path: Path, sample_config, sample_articles
 ):
     mock_gather.return_value = sample_articles
     mock_build.return_value = ("# MD Digest", "<h1>HTML Digest</h1>")
+    config_file = tmp_path / "config.json"
 
-    result = aggregator(sample_config, dry_run=True)
-    assert result == "# MD Digest"
+    result = aggregator(sample_config, config_path=config_file, dry_run=True)
+    assert "# MD Digest" in result
     assert not mock_send.called
 
 
@@ -126,12 +184,13 @@ def test_aggregator_dry_run(
 @patch("aggregator.load_gemini_api_key", return_value="gemini-key")
 @patch("aggregator.gather_all")
 def test_aggregator_full_run(
-    mock_gather, mock_key, mock_build, mock_smtp_pass, mock_send, sample_config, sample_articles
+    mock_gather, mock_key, mock_build, mock_smtp_pass, mock_send, tmp_path: Path, sample_config, sample_articles
 ):
     mock_gather.return_value = sample_articles
     mock_build.return_value = ("# MD Digest", "<h1>HTML Digest</h1>")
+    config_file = tmp_path / "config.json"
 
-    result = aggregator(sample_config)
+    result = aggregator(sample_config, config_path=config_file)
     assert result == "# MD Digest"
     mock_send.assert_called_once_with(
         sample_config["email"],
@@ -143,21 +202,115 @@ def test_aggregator_full_run(
     )
 
 
+@patch("aggregator.send_digest")
+@patch("aggregator.load_smtp_password", return_value="smtp-pass")
+@patch("aggregator.build_digest")
+@patch("aggregator.load_gemini_api_key", return_value="gemini-key")
+@patch("aggregator.gather_all")
+def test_aggregator_multi_recipient_run(
+    mock_gather, mock_key, mock_build, mock_smtp_pass, mock_send, tmp_path: Path, sample_config, sample_articles
+):
+    config_file = tmp_path / "config.json"
+    rec_dir = tmp_path / "recipients"
+    rec_dir.mkdir()
+
+    (rec_dir / "user_a.json").write_text(
+        json.dumps({"email_address": "usera@example.com", "topics": ["Artificial Intelligence"]}),
+        encoding="utf-8",
+    )
+    (rec_dir / "user_b.json").write_text(
+        json.dumps({"email_address": "userb@example.com", "topics": ["LLMs"]}),
+        encoding="utf-8",
+    )
+
+    mock_gather.return_value = sample_articles
+    mock_build.return_value = ("# MD Digest", "<h1>HTML Digest</h1>")
+
+    aggregator(sample_config, config_path=config_file)
+
+    assert mock_send.call_count == 2
+    recipients_sent = [call[0][0]["recipient"] for call in mock_send.call_args_list]
+    assert "usera@example.com" in recipients_sent
+    assert "userb@example.com" in recipients_sent
+
+
+
 def test_parse_args():
-    args = parse_args(["--dry-run", "--config", "custom.json"])
+    args = parse_args(["--dry-run", "--config", "custom.json", "--recipient", "alice@example.com"])
     assert args.dry_run is True
     assert args.gather_only is False
     assert args.config == Path("custom.json")
+    assert args.recipient == "alice@example.com"
 
 
 @patch("aggregator.aggregator")
 @patch("aggregator.load_config")
 def test_main_success(mock_load_config, mock_aggregator, sample_config):
     mock_load_config.return_value = sample_config
-    assert main(["--gather-only"]) == 0
+    assert main(["--gather-only", "--recipient", "default"]) == 0
     mock_aggregator.assert_called_once()
 
 
 @patch("aggregator.load_config", side_effect=Exception("Failed to read file"))
 def test_main_error(mock_load_config):
     assert main([]) == 1
+
+
+def test_is_valid_email():
+    assert is_valid_email("user@example.com") is True
+    assert is_valid_email("siddhantban+ai@gmail.com") is True
+    assert is_valid_email("not_an_email") is False
+    assert is_valid_email("@domain.com") is False
+    assert is_valid_email("") is False
+    assert is_valid_email(None) is False
+
+
+def test_discover_recipients_invalid_email(tmp_path: Path, sample_config):
+    config_file = tmp_path / "config.json"
+    rec_dir = tmp_path / "recipients"
+    rec_dir.mkdir()
+
+    (rec_dir / "bad_email.json").write_text(
+        json.dumps({"email_address": "not_an_email", "topics": ["AI"]}),
+        encoding="utf-8",
+    )
+    (rec_dir / "good_email.json").write_text(
+        json.dumps({"email_address": "good@example.com", "topics": ["AI"]}),
+        encoding="utf-8",
+    )
+
+    profiles = discover_recipients(config_file, sample_config)
+    assert len(profiles) == 1
+    assert profiles[0]["id"] == "good_email"
+    assert profiles[0]["email_address"] == "good@example.com"
+
+
+@patch("aggregator.send_digest")
+@patch("aggregator.load_smtp_password", return_value="smtp-pass")
+@patch("aggregator.build_digest")
+@patch("aggregator.load_gemini_api_key", return_value="gemini-key")
+@patch("aggregator.gather_all")
+def test_aggregator_send_digest_isolated_errors(
+    mock_gather, mock_key, mock_build, mock_smtp_pass, mock_send, tmp_path: Path, sample_config, sample_articles
+):
+    config_file = tmp_path / "config.json"
+    rec_dir = tmp_path / "recipients"
+    rec_dir.mkdir()
+
+    (rec_dir / "user_fail.json").write_text(
+        json.dumps({"email_address": "fail@example.com", "topics": ["AI"]}),
+        encoding="utf-8",
+    )
+    (rec_dir / "user_ok.json").write_text(
+        json.dumps({"email_address": "ok@example.com", "topics": ["AI"]}),
+        encoding="utf-8",
+    )
+
+    mock_gather.return_value = sample_articles
+    mock_build.return_value = ("# MD Digest", "<h1>HTML Digest</h1>")
+    mock_send.side_effect = [Exception("SMTPRecipientsRefused: 550"), None]
+
+    aggregator(sample_config, config_path=config_file)
+
+    assert mock_send.call_count == 2
+

@@ -312,3 +312,26 @@ def gather_all(config: dict[str, Any]) -> list[Article]:
 
     deduped = _dedupe_articles(all_articles)
     return deduped[:MAX_ARTICLES_FOR_GEMINI]
+
+
+def filter_articles_for_recipient(
+    articles: list[Article],
+    recipient_config: dict[str, Any],
+) -> list[Article]:
+    topics: list[str] = recipient_config.get("topics") or []
+    rss_feeds = recipient_config.get("rss_feeds") or []
+    feed_names = {
+        feed.get("name") or feed.get("url")
+        for feed in rss_feeds
+        if feed.get("name") or feed.get("url")
+    }
+
+    filtered: list[Article] = []
+    for article in articles:
+        matches_rss = article.source in feed_names
+        matches_topic = _matches_topics(article, topics)
+        if matches_rss or matches_topic:
+            filtered.append(article)
+
+    return filtered[:MAX_ARTICLES_FOR_GEMINI]
+
