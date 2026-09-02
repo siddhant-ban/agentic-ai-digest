@@ -13,7 +13,7 @@ def test_build_prompt(sample_articles):
     assert "User topics of interest:" in prompt
     assert "- AI" in prompt
     assert "- LLMs" in prompt
-    assert "Articles (2 total):" in prompt
+    assert "Items (2 total):" in prompt
     assert "New Gemini Model Released" in prompt
     assert "Open Source LLM Benchmark Breakthrough" in prompt
 
@@ -22,7 +22,7 @@ def test_fallback_digest(sample_articles):
     topics = ["AI", "LLMs"]
     fallback = _fallback_digest(sample_articles, topics)
 
-    assert "# AI News Digest (Fallback)" in fallback
+    assert "# AI & LLMs Digest (Fallback)" in fallback
     assert "Topics: AI, LLMs" in fallback
     assert "## New Gemini Model Released" in fallback
     assert "- Source: TechCrunch AI" in fallback
@@ -32,10 +32,10 @@ def test_fallback_digest(sample_articles):
 def test_build_digest_empty_articles():
     md, html = build_digest([], ["AI"], "fake-key", "gemini-2.0-flash")
 
-    assert "# AI News Digest" in md
-    assert "No new articles were found" in md
+    assert "# AI Digest" in md
+    assert "No new items were found" in md
     assert "<h1" in html
-    assert "No new articles" in html
+    assert "No new items" in html
 
 
 @patch("summarizer.genai.Client")
@@ -66,6 +66,6 @@ def test_build_digest_retry_and_fallback(mock_client_cls, mock_sleep, sample_art
 
     md, html = build_digest(sample_articles, ["AI"], "fake-key", "gemini-2.0-flash")
 
-    assert "# AI News Digest (Fallback)" in md
+    assert "# AI Digest (Fallback)" in md
     assert mock_client.models.generate_content.call_count == 2
     assert mock_sleep.call_count == 1

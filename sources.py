@@ -206,10 +206,10 @@ def _fetch_rss_feed(
 def _search_queries_for_topic(topic: str, count: int) -> list[str]:
     year = _utc_now().year
     templates = [
-        f"{topic} AI news {year}",
-        f"latest {topic} artificial intelligence",
-        f"{topic} AI breakthrough {year}",
-        f"new {topic} AI model release",
+        f"{topic} {year}",
+        f"latest {topic}",
+        f"new {topic} {year}",
+        f"best {topic} {year}",
     ]
     return templates[: max(1, count)]
 

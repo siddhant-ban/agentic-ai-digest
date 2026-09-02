@@ -79,7 +79,7 @@ def parse_recipient_raw(
     subject_prefix = (
         raw.get("subject_prefix")
         or (raw.get("email", {}) if isinstance(raw.get("email"), dict) else {}).get("subject_prefix")
-        or global_config.get("email", {}).get("subject_prefix", "[AI Digest]")
+        or global_config.get("email", {}).get("subject_prefix", "[Daily Digest]")
     )
 
     email_config = {
