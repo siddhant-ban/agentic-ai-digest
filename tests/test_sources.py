@@ -143,19 +143,22 @@ def test_dedupe_articles():
 
 @patch("sources.feedparser.parse")
 def test_fetch_rss_feed(mock_parse):
+    now = datetime.now(timezone.utc)
+    recent_date_str = (now - timedelta(hours=2)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+
     mock_parsed = MagicMock()
     mock_parsed.bozo = False
     mock_parsed.entries = [
         {
             "title": "AI Model Launch",
             "link": "https://example.com/rss1",
-            "published": "Thu, 27 Aug 2026 12:00:00 GMT",
+            "published": recent_date_str,
             "summary": "<p>Great new model released.</p>",
         },
         {
             "title": "Unrelated Topic",
             "link": "https://example.com/rss2",
-            "published": "Thu, 27 Aug 2026 12:00:00 GMT",
+            "published": recent_date_str,
             "summary": "Sports scores for today.",
         },
     ]
@@ -177,13 +180,16 @@ def test_fetch_rss_feed(mock_parse):
 @patch("sources.DDGS")
 @patch("sources.time.sleep", return_value=None)
 def test_fetch_search_results(mock_sleep, mock_ddgs_cls):
+    now = datetime.now(timezone.utc)
+    recent_iso_str = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     mock_ddgs = MagicMock()
     mock_ddgs_cls.return_value = mock_ddgs
     mock_ddgs.news.return_value = [
         {
             "title": "DDG AI Update",
             "url": "https://example.com/ddg1",
-            "date": "2026-08-27T10:00:00Z",
+            "date": recent_iso_str,
             "body": "DuckDuckGo search result body.",
         }
     ]
@@ -198,6 +204,7 @@ def test_fetch_search_results(mock_sleep, mock_ddgs_cls):
     assert len(articles) == 1
     assert articles[0].title == "DDG AI Update"
     assert articles[0].source == "DuckDuckGo (AI)"
+
 
 
 @patch("sources._fetch_rss_feed")
