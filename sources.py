@@ -222,7 +222,7 @@ def _fetch_search_results(
 ) -> list[Article]:
     articles: list[Article] = []
     try:
-        ddgs = DDGS()
+        ddgs = DDGS(timeout=10)
     except Exception as exc:
         logger.warning("Failed to initialize DuckDuckGo search: %s", exc)
         return articles
@@ -237,11 +237,12 @@ def _fetch_search_results(
                         timelimit="w" if lookback_hours <= 168 else "m",
                     )
                 )
-            except Exception:
+            except Exception as news_exc:
+                logger.warning("DDG news search failed for query %r: %s", query, news_exc)
                 try:
                     results = list(ddgs.text(query, max_results=max_articles))
                 except Exception as exc:
-                    logger.warning("Search failed for query %r: %s", query, exc)
+                    logger.warning("DDG text search fallback also failed for query %r: %s", query, exc)
                     results = []
 
             for result in results:
