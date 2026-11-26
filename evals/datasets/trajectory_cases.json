@@ -1,0 +1,238 @@
+{
+  "dataset_version": "1.0",
+  "cases": [
+    {
+      "case_id": "thin_snippets_require_scrape",
+      "description": "6 RSS articles covering both topics (3 each), with 2 thin snippets (<80 chars) that should trigger fetch_article_content and 4 rich snippets that should be skipped.",
+      "topics": [
+        "LLM model releases",
+        "AI agents and tool use"
+      ],
+      "articles": [
+        {
+          "article_id": "58f072b105b3135c",
+          "canonical_url": "https://huggingface.co/blog/deepseek-r2-lite-release",
+          "url": "https://huggingface.co/blog/deepseek-r2-lite-release",
+          "title": "Open-weight reasoning model DeepSeek-R2-Lite released",
+          "source": "Hugging Face Blog",
+          "published_at": "2026-11-26T09:00:00Z",
+          "snippet": "New open-weight reasoning model released today.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "850bdad7a98ee8a7",
+          "canonical_url": "https://blog.google/technology/developers/adk-v2-multi-agent-eval",
+          "url": "https://blog.google/technology/developers/adk-v2-multi-agent-eval",
+          "title": "Google ADK v2.15 ships new agent evaluation harness",
+          "source": "Google AI Blog",
+          "published_at": "2026-11-26T08:30:00Z",
+          "snippet": "Google released an updated ADK framework with eval tools.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "AI agents and tool use"
+          ]
+        },
+        {
+          "article_id": "5d0d5d04872d4727",
+          "canonical_url": "https://openai.com/news/gpt-5-mini-pricing-update",
+          "url": "https://openai.com/news/gpt-5-mini-pricing-update",
+          "title": "OpenAI cuts structured output latency and pricing for GPT-5 Mini",
+          "source": "OpenAI News",
+          "published_at": "2026-11-26T07:00:00Z",
+          "snippet": "OpenAI announced a 30% price reduction and faster constrained JSON decoding for GPT-5 Mini across batch and real-time API endpoints, detailing benchmark results on function calling, extraction accuracy, and long-context retrieval across enterprise workloads.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "04bb30d56c63a959",
+          "canonical_url": "https://www.anthropic.com/news/claude-haiku-enterprise-update",
+          "url": "https://www.anthropic.com/news/claude-haiku-enterprise-update",
+          "title": "Anthropic expands prompt caching window and tool schemas in Claude Haiku",
+          "source": "Anthropic News",
+          "published_at": "2026-11-26T06:00:00Z",
+          "snippet": "Anthropic rolled out extended 1-hour prompt caching and strict tool-use validation for Claude Haiku, reporting up to 65% input token cost savings for repetitive document classification and customer support routing agents in production deployments.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "2f29953cc97aacd0",
+          "canonical_url": "https://blog.langchain.dev/langgraph-durable-checkpoints-v3",
+          "url": "https://blog.langchain.dev/langgraph-durable-checkpoints-v3",
+          "title": "LangGraph v3 adds deterministic state checkpoints for resumable tool agents",
+          "source": "LangChain Blog",
+          "published_at": "2026-11-26T05:00:00Z",
+          "snippet": "LangGraph v3 introduces PostgreSQL-backed execution checkpoints that allow long-running tool-calling agents to pause for human approval, replay failed tool nodes cleanly without repeating earlier LLM turns, and inspect state diffs in production.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "AI agents and tool use"
+          ]
+        },
+        {
+          "article_id": "c6c10f4a26e7c0d7",
+          "canonical_url": "https://www.technologyreview.com/2026/11/26/enterprise-agent-sandboxes",
+          "url": "https://www.technologyreview.com/2026/11/26/enterprise-agent-sandboxes",
+          "title": "How enterprises are isolating autonomous coding agents with microVM sandboxes",
+          "source": "MIT Tech Review AI",
+          "published_at": "2026-11-26T04:00:00Z",
+          "snippet": "Security engineering teams at major software firms are standardizing on ephemeral Firecracker microVMs and strict egress allowlists for autonomous coding agents, preventing SSRF attacks against cloud metadata endpoints while preserving fast build feedback loops.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "AI agents and tool use"
+          ]
+        }
+      ],
+      "expected_scrape_ids": [
+        "58f072b105b3135c",
+        "850bdad7a98ee8a7"
+      ],
+      "forbidden_scrape_ids": [
+        "5d0d5d04872d4727",
+        "04bb30d56c63a959",
+        "2f29953cc97aacd0",
+        "c6c10f4a26e7c0d7"
+      ],
+      "max_searches": 1,
+      "min_scrapes": 1,
+      "fixture_full_texts": {
+        "https://huggingface.co/blog/deepseek-r2-lite-release": "DeepSeek-R2-Lite is a 14B open-weight reasoning model released under MIT license with 64K context length, achieving 81.4% on MATH-500 and running at 95 tokens per second on a single consumer 24GB GPU.",
+        "https://blog.google/technology/developers/adk-v2-multi-agent-eval": "Google ADK v2.15 introduces a standardized trajectory evaluation runner, strict Pydantic output_schema validation, and per-event token usage accounting designed for Vertex AI and local Gemini API workflows."
+      },
+      "fixture_search_results": []
+    },
+    {
+      "case_id": "rich_rss_skip_unnecessary_tools",
+      "description": "7 RSS articles across 2 topics (4 + 3) where every article already has a rich snippet (>240 chars); expects zero unnecessary searches or scrapes.",
+      "topics": [
+        "Clean energy and grid storage",
+        "Industrial robotics"
+      ],
+      "articles": [
+        {
+          "article_id": "f935961301d3ecc0",
+          "canonical_url": "https://www.canarymedia.com/articles/iron-air-grid-milestone",
+          "url": "https://www.canarymedia.com/articles/iron-air-grid-milestone",
+          "title": "Form Energy switches on 100-hour iron-air battery array in Minnesota",
+          "source": "Canary Media",
+          "published_at": "2026-11-26T08:00:00Z",
+          "snippet": "Form Energy energized its first commercial 10 MW / 1,000 MWh iron-air multi-day battery installation at a former Minnesota coal station, proving reversible iron rusting chemistry can discharge continuously across four-day winter lulls at utility scale.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "1e892d6704afd381",
+          "canonical_url": "https://www.utilitydive.com/news/texas-ercot-battery-fleet-12gw",
+          "url": "https://www.utilitydive.com/news/texas-ercot-battery-fleet-12gw",
+          "title": "ERCOT battery storage fleet crosses 12 GW, slashing summer peak price spikes",
+          "source": "Utility Dive",
+          "published_at": "2026-11-26T07:00:00Z",
+          "snippet": "Texas grid operator ERCOT crossed 12 gigawatts of operational utility-scale batteries this month, with market monitors crediting fast-responding storage for cutting scarcity pricing hours by more than half compared to two years ago.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "2ac781bc5b6f60f4",
+          "canonical_url": "https://www.reuters.com/business/energy/eu-hvdc-offshore-grid-2026",
+          "url": "https://www.reuters.com/business/energy/eu-hvdc-offshore-grid-2026",
+          "title": "North Sea HVDC interconnectors add 4.2 GW of cross-border wind transmission",
+          "source": "Reuters Energy",
+          "published_at": "2026-11-26T06:00:00Z",
+          "snippet": "European transmission operators commissioned two high-voltage direct-current subsea cables totaling 4.2 GW between offshore wind arrays and coastal substations, reducing curtailment during high-wind nights across Germany, Denmark, and the UK.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "b8248b521ca72eba",
+          "canonical_url": "https://www.bloomberg.com/news/articles/2026-11-26/geothermal-baseload-utah",
+          "url": "https://www.bloomberg.com/news/articles/2026-11-26/geothermal-baseload-utah",
+          "title": "Fervo Energy begins 100 MW enhanced geothermal deliveries in Utah",
+          "source": "Bloomberg Green",
+          "published_at": "2026-11-26T05:00:00Z",
+          "snippet": "Fervo Energy began commercial electricity deliveries from its 100 MW Cape Station enhanced geothermal array in Utah, validating horizontal drilling techniques that cut well completion costs by 45% over two years of field operation.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "178888690f2362a1",
+          "canonical_url": "https://spectrum.ieee.org/electric-atlas-automotive-trial",
+          "url": "https://spectrum.ieee.org/electric-atlas-automotive-trial",
+          "title": "Electric Atlas humanoids begin component sequencing trial at Hyundai factory",
+          "source": "IEEE Spectrum",
+          "published_at": "2026-11-26T08:15:00Z",
+          "snippet": "Boston Dynamics deployed a cohort of all-electric Atlas humanoids onto a Hyundai manufacturing line to sort and stage metal chassis brackets, testing autonomous vision-guided recovery when parts arrive rotated inside supply bins.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Industrial robotics"
+          ]
+        },
+        {
+          "article_id": "766407690b2e5ce0",
+          "canonical_url": "https://techcrunch.com/2026/11/26/agility-robofab-scaleup",
+          "url": "https://techcrunch.com/2026/11/26/agility-robofab-scaleup",
+          "title": "Agility Robotics scales Oregon RoboFab plant toward 10,000 Digit units per year",
+          "source": "TechCrunch Robotics",
+          "published_at": "2026-11-26T06:45:00Z",
+          "snippet": "Agility Robotics unveiled a newly automated assembly wing at its Salem, Oregon factory aimed at producing up to 10,000 bipedal Digit robots annually for tote-handling contracts across North American distribution centers.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Industrial robotics"
+          ]
+        },
+        {
+          "article_id": "7dfa2031d5e1b569",
+          "canonical_url": "https://www.therobotreport.com/fanuc-vision-palletizer-launch",
+          "url": "https://www.therobotreport.com/fanuc-vision-palletizer-launch",
+          "title": "Fanuc debuts 35 kg vision-guided collaborative palletizer for mixed-SKU warehouses",
+          "source": "The Robot Report",
+          "published_at": "2026-11-26T05:30:00Z",
+          "snippet": "Fanuc announced a 35-kilogram payload collaborative palletizing robot equipped with 3D structured-light cameras and force-limited joints, enabling small logistics facilities to automate mixed-box stacking without perimeter fencing.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Industrial robotics"
+          ]
+        }
+      ],
+      "expected_scrape_ids": [],
+      "forbidden_scrape_ids": [
+        "f935961301d3ecc0",
+        "1e892d6704afd381",
+        "2ac781bc5b6f60f4",
+        "b8248b521ca72eba",
+        "178888690f2362a1",
+        "766407690b2e5ce0",
+        "7dfa2031d5e1b569"
+      ],
+      "max_searches": 0,
+      "max_scrapes": 0,
+      "fixture_full_texts": {},
+      "fixture_search_results": []
+    }
+  ]
+}

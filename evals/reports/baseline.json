@@ -1,0 +1,358 @@
+{
+  "mode": "full",
+  "model_config_snapshot": {
+    "research_model": "gemini-3.1-flash-lite",
+    "synthesis_model": "gemini-3.1-flash-lite",
+    "critic_model": "gemini-3.1-flash-lite"
+  },
+  "timestamp_utc": "2026-11-26T19:42:31.975010+00:00",
+  "summary": {
+    "schema_validity_rate": 1.0,
+    "url_grounding_rate": 1.0,
+    "duplicate_leakage_rate": 0.0,
+    "topic_coverage_rate": 1.0,
+    "trajectory_precision": 1.0,
+    "avg_revisions": 0.0,
+    "avg_latency_ms": 54829.7,
+    "estimated_cost_usd": 0.004993,
+    "mean_faithfulness": 5.0,
+    "mean_relevance": 5.0,
+    "mean_synthesis_quality": 5.0,
+    "mean_conciseness": 5.0
+  },
+  "cases": [
+    {
+      "case_id": "ai_engineering",
+      "schema_valid": true,
+      "url_grounding_rate": 1.0,
+      "duplicate_leakage_rate": 0.0,
+      "topic_coverage_rate": 1.0,
+      "revisions": 0,
+      "latency_ms": 101062.8,
+      "used_fallback": false,
+      "verification_errors": [],
+      "judge": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "synthesis_quality": 5,
+        "conciseness": 5,
+        "rationale": "The digest is perfectly grounded in the provided source material. It effectively synthesizes multiple articles on similar topics (e.g., combining Anthropic and LangChain for agent reliability, and merging Google's Gemini 3.1 announcements) while maintaining a professional, executive-ready tone. It adheres strictly to the target topics and avoids all disallowed content."
+      },
+      "draft": {
+        "title": "AI Infrastructure and Model Development Briefing",
+        "executive_summary": "Recent advancements focus on inference efficiency and agentic reliability, with significant gains in serving throughput and latency reduction. New model releases and updated development kits are prioritizing structured output and long-context performance to support complex, multi-step agent workflows.",
+        "highlights": [
+          {
+            "title": "Google Launches Gemini 3.1 Flash-Lite for Structured Workloads",
+            "topic": "LLM model releases",
+            "summary": "Google has released Gemini 3.1 Flash-Lite, which offers a 40% reduction in median latency for JSON schema extraction and high-throughput classification tasks. The model is specifically optimized for cost-sensitive, multi-agent pipelines on Vertex AI.",
+            "why_it_matters": "The improved latency and lower per-token pricing make high-volume agent loops more economically viable and responsive for enterprise applications.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "VentureBeat",
+                "url": "https://venturebeat.com/ai/google-gemini-3-1-flash-lite-launch",
+                "article_id": "46e2fb13bcb433c0"
+              },
+              {
+                "source_name": "TechCrunch",
+                "url": "https://techcrunch.com/2026/11/26/google-debuts-gemini-3-1-flash-lite-for-agents",
+                "article_id": "5dc857ec8d0c3cc1"
+              }
+            ]
+          },
+          {
+            "title": "Qwen3-Coder 32B Released with 128K Context",
+            "topic": "LLM model releases",
+            "summary": "The Qwen team has released Qwen3-Coder 32B under an Apache 2.0 license, featuring a 128K token context length. The model includes enhancements for multi-file patch editing and comes with open evaluation scripts for SWE-bench Verified.",
+            "why_it_matters": "Providing high-context, open-weights coding models enables developers to perform more sophisticated repository-level analysis and automated code maintenance.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "Hugging Face Blog",
+                "url": "https://huggingface.co/blog/qwen3-coder-32b-open-weights",
+                "article_id": "2a0ddc7643e81f02"
+              }
+            ]
+          },
+          {
+            "title": "vLLM 0.14 Enables Disaggregated Prefill-Decode Scheduling",
+            "topic": "Inference optimization",
+            "summary": "vLLM 0.14 introduces a disaggregated architecture that separates prompt prefill workers from token decode pools using RDMA for KV-cache transfer. This update reduces 99th-percentile time-to-first-token (TTFT) by 35% on mixed long-context traffic.",
+            "why_it_matters": "Decoupling prefill and decode allows for better resource utilization and lower latency in production environments handling diverse request lengths.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "vLLM Blog",
+                "url": "https://blog.vllm.ai/2026/11/26/vllm-0-14-disaggregated-prefill",
+                "article_id": "4dbbfdda19585e23"
+              }
+            ]
+          },
+          {
+            "title": "NVIDIA FP4 Kernels Boost Blackwell Throughput",
+            "topic": "Inference optimization",
+            "summary": "NVIDIA has released updated FP4 quantization kernels for TensorRT-LLM on Blackwell GPUs. These kernels achieve a 2.1x increase in output tokens per second for 70B-parameter models while maintaining high accuracy.",
+            "why_it_matters": "Significant throughput gains on Blackwell hardware enable more efficient scaling of large models in high-demand serving environments.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "NVIDIA Developer Blog",
+                "url": "https://developer.nvidia.com/blog/fp4-blackwell-kernels-70b-throughput",
+                "article_id": "ea521fc45c190618"
+              }
+            ]
+          },
+          {
+            "title": "TorchAO 0.9 Adds Tree-Based Speculative Decoding",
+            "topic": "Inference optimization",
+            "summary": "PyTorch's TorchAO 0.9 release includes fused kernels for tree-based speculative decoding. This approach provides 1.6x to 1.9x decode speedups for low-batch inference without impacting output distributions.",
+            "why_it_matters": "This optimization improves performance for latency-sensitive applications that operate with small batch sizes, such as real-time chat or interactive coding assistants.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "PyTorch Blog",
+                "url": "https://pytorch.org/blog/torchao-0-9-speculative-decoding-trees",
+                "article_id": "323a9a304fa1b775"
+              }
+            ]
+          },
+          {
+            "title": "Anthropic and LangChain Address Agent Reliability",
+            "topic": "AI agents and tool use",
+            "summary": "Anthropic and LangChain have released guidance on improving agent reliability, focusing on context compaction, parallel tool execution, and deterministic verifier nodes. These methods help mitigate hallucinations and manage long-horizon sessions.",
+            "why_it_matters": "Implementing these architectural patterns is critical for moving agents from experimental prototypes to reliable production systems.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "Anthropic Engineering",
+                "url": "https://www.anthropic.com/engineering/long-horizon-tool-compaction",
+                "article_id": "4bfbbd4b210da10a"
+              },
+              {
+                "source_name": "LangChain Blog",
+                "url": "https://blog.langchain.dev/deterministic-verifier-nodes-production-agents",
+                "article_id": "38cc41ae2efaed1a"
+              }
+            ]
+          },
+          {
+            "title": "OpenAI Releases Browser Agent Benchmark",
+            "topic": "AI agents and tool use",
+            "summary": "OpenAI has published an open benchmark for evaluating autonomous web agents on multi-step enterprise forms. The evaluation reveals that while agents perform well at navigation, they struggle with dynamic page mutations during form handling.",
+            "why_it_matters": "Identifying specific failure modes in dynamic web environments provides a clear roadmap for improving the robustness of browser-based automation agents.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "OpenAI News",
+                "url": "https://openai.com/news/browser-agent-evaluation-harness",
+                "article_id": "ea7fa9144a1d718f"
+              }
+            ]
+          },
+          {
+            "title": "Google ADK 2.15 Enhances Structured Output and Telemetry",
+            "topic": "AI agents and tool use",
+            "summary": "Google's Agent Development Kit (ADK) 2.15 now supports Pydantic output schemas and provides per-turn usage metadata telemetry. These updates are designed to improve developer visibility and schema enforcement in agentic workflows.",
+            "why_it_matters": "Enhanced telemetry and native schema support simplify the debugging and monitoring of complex agent pipelines in production.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "Google Cloud Blog",
+                "url": "https://cloud.google.com/blog/products/ai-machine-learning/google-adk-2-15-structured-schemas",
+                "article_id": "79cb6a79360447f6"
+              }
+            ]
+          }
+        ],
+        "notable_trends": [
+          "Shift toward disaggregated and tree-based inference architectures to minimize latency.",
+          "Increased focus on structured output schemas and deterministic verification to improve agent reliability.",
+          "Standardization of open benchmarks to address specific failure modes in autonomous web agents."
+        ]
+      }
+    },
+    {
+      "case_id": "general_tech_science",
+      "schema_valid": true,
+      "url_grounding_rate": 1.0,
+      "duplicate_leakage_rate": 0.0,
+      "topic_coverage_rate": 1.0,
+      "revisions": 0,
+      "latency_ms": 34461.6,
+      "used_fallback": false,
+      "verification_errors": [],
+      "judge": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "synthesis_quality": 5,
+        "conciseness": 5,
+        "rationale": "The digest is highly accurate, strictly adhering to the provided source material. It effectively synthesizes the most relevant news items within the requested topics, maintaining a professional and scannable structure suitable for an executive audience."
+      },
+      "draft": {
+        "title": "Executive Briefing: Clean Energy and Robotics Advancements",
+        "executive_summary": "Recent developments highlight significant progress in grid-scale storage and industrial automation. Key milestones include the deployment of the first 100-hour iron-air battery system and the scaling of humanoid robot manufacturing to support high-volume logistics and assembly operations.",
+        "highlights": [
+          {
+            "title": "Form Energy Commissions First 100-Hour Iron-Air Battery Site",
+            "topic": "Clean energy and grid storage",
+            "summary": "Form Energy has successfully commissioned a 10 MW / 1,000 MWh iron-air battery facility in Minnesota. This project represents the first utility-scale deployment of 100-hour multi-day energy storage on the U.S. grid, situated at a retiring coal plant site.",
+            "why_it_matters": "This deployment provides a critical solution for long-duration energy storage, enabling the grid to manage multi-day renewable energy intermittency that shorter-duration lithium-ion batteries cannot address.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "Canary Media",
+                "url": "https://www.canarymedia.com/articles/long-duration-storage/form-energy-minnesota-iron-air",
+                "article_id": "c0a361c158647547"
+              }
+            ]
+          },
+          {
+            "title": "Boston Dynamics Deploys Electric Atlas in Hyundai Pilot",
+            "topic": "Humanoid and industrial robotics",
+            "summary": "Boston Dynamics has initiated a factory pilot program using its fully electric Atlas humanoid robots. The robots are performing tasks on a Hyundai automotive assembly line, specifically sequencing heavy suspension brackets and demonstrating autonomous recovery from part misalignment.",
+            "why_it_matters": "This pilot marks a transition from laboratory testing to real-world industrial application for humanoid robots, proving their capability to handle complex, repetitive tasks in dynamic manufacturing environments.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "IEEE Spectrum",
+                "url": "https://spectrum.ieee.org/boston-dynamics-electric-atlas-hyundai-pilot",
+                "article_id": "ba295e05306d1642"
+              }
+            ]
+          },
+          {
+            "title": "Agility Robotics Expands RoboFab to 10,000-Unit Capacity",
+            "topic": "Humanoid and industrial robotics",
+            "summary": "Agility Robotics has completed the second phase of its Oregon-based RoboFab facility, increasing its annual production capacity to 10,000 Digit bipedal robots. The expansion coincides with new logistics customer orders for the warehouse-focused humanoid.",
+            "why_it_matters": "Scaling production to 10,000 units annually signals a shift toward mass-market adoption of humanoid robots in logistics, potentially addressing labor shortages in warehouse operations.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "TechCrunch Robotics",
+                "url": "https://techcrunch.com/2026/11/26/agility-robotics-robofab-expansion-10000-units",
+                "article_id": "cbed1bc6815028df"
+              }
+            ]
+          },
+          {
+            "title": "California Grid Batteries Offset Evening Peak Demand",
+            "topic": "Clean energy and grid storage",
+            "summary": "Operational data from the California ISO indicates that utility-scale lithium-ion batteries supplied an average of 28% of evening net-peak electricity demand for 45 consecutive days. This consistent performance has significantly reduced the reliance on natural gas peaker plants.",
+            "why_it_matters": "The data demonstrates that grid-scale battery storage has matured into a reliable, primary resource for managing evening peak demand, effectively displacing fossil-fuel-based generation.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "Utility Dive",
+                "url": "https://www.utilitydive.com/news/caiso-batteries-28-percent-evening-peak/734120",
+                "article_id": "5ef9650b353369cb"
+              }
+            ]
+          },
+          {
+            "title": "Fervo Energy Launches 100 MW Enhanced Geothermal Phase",
+            "topic": "Clean energy and grid storage",
+            "summary": "Fervo Energy has begun commercial power delivery from the first 100 MW phase of its Cape Station enhanced geothermal project in Utah. The project provides firm, carbon-free baseload electricity to the grid under long-term utility contracts.",
+            "why_it_matters": "Enhanced geothermal systems provide a reliable, 24/7 source of clean energy that can serve as a direct replacement for retiring baseload coal and gas plants.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "Bloomberg Green",
+                "url": "https://www.bloomberg.com/news/articles/2026-11-25/fervo-utah-geothermal-100mw",
+                "article_id": "28bc3fc8566ef5a4"
+              }
+            ]
+          }
+        ],
+        "notable_trends": [
+          "Rapid scaling of humanoid robot manufacturing capacity for industrial logistics.",
+          "Transition of grid-scale storage from short-duration lithium-ion to multi-day iron-air technologies.",
+          "Increased integration of autonomous systems in both energy infrastructure and factory assembly lines."
+        ]
+      }
+    },
+    {
+      "case_id": "sparse_day",
+      "schema_valid": true,
+      "url_grounding_rate": 1.0,
+      "duplicate_leakage_rate": 0.0,
+      "topic_coverage_rate": 1.0,
+      "revisions": 0,
+      "latency_ms": 28964.8,
+      "used_fallback": false,
+      "verification_errors": [],
+      "judge": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "synthesis_quality": 5,
+        "conciseness": 5,
+        "rationale": "The digest is perfectly grounded in the provided source articles, accurately reflecting the technical details of both the Google Quantum AI error suppression milestone and the TSMC N2 risk production. It adheres strictly to the requested topics, maintains a professional executive tone, and provides meaningful context in the 'why it matters' sections."
+      },
+      "draft": {
+        "title": "Executive Briefing: Quantum Advancements and Semiconductor Scaling",
+        "executive_summary": "Recent technical milestones highlight significant progress in both quantum error correction and advanced semiconductor manufacturing. Google Quantum AI has demonstrated improved error suppression on a 105-qubit processor, while TSMC has commenced risk production for its 2-nanometer gate-all-around process.",
+        "highlights": [
+          {
+            "title": "Google Quantum AI Achieves Below-Threshold Error Suppression",
+            "topic": "Quantum computing",
+            "summary": "Researchers at Google Quantum AI have successfully demonstrated exponential error rate reduction on a 105-qubit superconducting processor. By scaling surface-code distance from 3 to 7, the team achieved a logical qubit lifetime that is double that of the best physical qubit.",
+            "why_it_matters": "This milestone validates the scalability of surface-code error correction, a critical requirement for building fault-tolerant quantum computers capable of practical applications.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "Nature Physics",
+                "url": "https://www.nature.com/articles/s41567-026-02891-quantum-threshold",
+                "article_id": "a758921aec8b9077"
+              }
+            ]
+          },
+          {
+            "title": "TSMC Initiates N2 Gate-All-Around Risk Production",
+            "topic": "Semiconductor manufacturing",
+            "summary": "TSMC has officially started risk production for its 2-nanometer (N2) nanosheet process at its Baoshan facility. The company reports that the new process achieves a 15% reduction in power draw at iso-frequency compared to the N3E node, while meeting established defect density targets.",
+            "why_it_matters": "The transition to gate-all-around transistor architecture is essential for maintaining performance and power efficiency gains as the industry moves beyond the 3nm node.",
+            "story_status": "new",
+            "citations": [
+              {
+                "source_name": "Semiconductor Engineering",
+                "url": "https://semiengineering.com/tsmc-n2-baoshan-risk-production-power-gains",
+                "article_id": "d9dc346a955240d1"
+              }
+            ]
+          }
+        ],
+        "notable_trends": [
+          "Increased focus on architectural scaling to overcome physical limitations in both quantum and classical computing.",
+          "Emphasis on power efficiency and error mitigation as primary metrics for next-generation hardware."
+        ]
+      }
+    }
+  ],
+  "trajectories": [
+    {
+      "case_id": "thin_snippets_require_scrape",
+      "trajectory_precision": 1.0,
+      "scrape_calls": [
+        "58f072b105b3135c",
+        "850bdad7a98ee8a7"
+      ],
+      "search_calls": [],
+      "expected_scrape_hits": 2,
+      "forbidden_scrape_hits": 0,
+      "unnecessary_search_calls": 0,
+      "latency_ms": 5680.9
+    },
+    {
+      "case_id": "rich_rss_skip_unnecessary_tools",
+      "trajectory_precision": 1.0,
+      "scrape_calls": [],
+      "search_calls": [],
+      "expected_scrape_hits": 0,
+      "forbidden_scrape_hits": 0,
+      "unnecessary_search_calls": 0,
+      "latency_ms": 4303.9
+    }
+  ],
+  "gates_passed": true,
+  "gate_failures": []
+}

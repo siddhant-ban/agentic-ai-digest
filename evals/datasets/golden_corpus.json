@@ -1,0 +1,420 @@
+{
+  "dataset_version": "1.0",
+  "cases": [
+    {
+      "case_id": "ai_engineering",
+      "description": "12 AI engineering articles: 2 duplicate-outlet stories, 1 stale URL in seen_urls, 1 thin-snippet article.",
+      "recipient": {
+        "id": "eval-ai-eng",
+        "email_address": "ai-eng@example.com",
+        "subject_prefix": "[AI Engineering Digest]",
+        "enabled": true,
+        "topics": [
+          "LLM model releases",
+          "AI agents and tool use",
+          "Inference optimization"
+        ],
+        "rss_feeds": [],
+        "lookback_hours": 36,
+        "max_highlights": 8
+      },
+      "available_topics": [
+        "LLM model releases",
+        "AI agents and tool use",
+        "Inference optimization"
+      ],
+      "seen_urls": [
+        "https://arstechnica.com/ai/2026/11/mistral-enterprise-hub-governance"
+      ],
+      "articles": [
+        {
+          "article_id": "46e2fb13bcb433c0",
+          "canonical_url": "https://venturebeat.com/ai/google-gemini-3-1-flash-lite-launch",
+          "url": "https://venturebeat.com/ai/google-gemini-3-1-flash-lite-launch",
+          "title": "Google launches Gemini 3.1 Flash-Lite with 40% lower latency for structured workloads",
+          "source": "VentureBeat",
+          "published_at": "2026-11-26T09:00:00Z",
+          "snippet": "Google released Gemini 3.1 Flash-Lite on Vertex AI and the Gemini API, cutting median latency by 40% on JSON schema extraction and high-throughput classification tasks while preserving tool-calling reliability.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "5dc857ec8d0c3cc1",
+          "canonical_url": "https://techcrunch.com/2026/11/26/google-debuts-gemini-3-1-flash-lite-for-agents",
+          "url": "https://techcrunch.com/2026/11/26/google-debuts-gemini-3-1-flash-lite-for-agents",
+          "title": "Google debuts Gemini 3.1 Flash-Lite aimed at cost-sensitive multi-agent pipelines",
+          "source": "TechCrunch",
+          "published_at": "2026-11-26T09:30:00Z",
+          "snippet": "Targeting developers running high-volume agent loops, Google announced Gemini 3.1 Flash-Lite with 40% faster responses for structured JSON outputs and lower per-token pricing on Vertex AI.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "2a0ddc7643e81f02",
+          "canonical_url": "https://huggingface.co/blog/qwen3-coder-32b-open-weights",
+          "url": "https://huggingface.co/blog/qwen3-coder-32b-open-weights",
+          "title": "Qwen3-Coder 32B arrives under Apache 2.0 with native 128K repository context",
+          "source": "Hugging Face Blog",
+          "published_at": "2026-11-26T08:15:00Z",
+          "snippet": "The Qwen team released Qwen3-Coder 32B weights under an Apache 2.0 license, featuring 128K token context length, improved multi-file patch editing, and open evaluation scripts for SWE-bench Verified.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "4bfbbd4b210da10a",
+          "canonical_url": "https://www.anthropic.com/engineering/long-horizon-tool-compaction",
+          "url": "https://www.anthropic.com/engineering/long-horizon-tool-compaction",
+          "title": "Context compaction and parallel tool calls in long-horizon coding agents",
+          "source": "Anthropic Engineering",
+          "published_at": "2026-11-26T07:45:00Z",
+          "snippet": "Anthropic engineers shared architecture patterns for keeping agent sessions reliable past 50 tool turns, highlighting structured tool-output summarization and schema-validated parallel tool execution.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "AI agents and tool use"
+          ]
+        },
+        {
+          "article_id": "38cc41ae2efaed1a",
+          "canonical_url": "https://blog.langchain.dev/deterministic-verifier-nodes-production-agents",
+          "url": "https://blog.langchain.dev/deterministic-verifier-nodes-production-agents",
+          "title": "Adding deterministic verifier gates cuts citation hallucinations in agent pipelines",
+          "source": "LangChain Blog",
+          "published_at": "2026-11-26T06:20:00Z",
+          "snippet": "Production teams deploying retrieval and briefing agents report that pairing structured LLM outputs with deterministic URL and schema verifiers before a critic pass catches broken links cheaply without extra judge calls.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "AI agents and tool use"
+          ]
+        },
+        {
+          "article_id": "79cb6a79360447f6",
+          "canonical_url": "https://cloud.google.com/blog/products/ai-machine-learning/google-adk-2-15-structured-schemas",
+          "url": "https://cloud.google.com/blog/products/ai-machine-learning/google-adk-2-15-structured-schemas",
+          "title": "Google ADK 2.15 adds enhanced structured output schemas and session diagnostics",
+          "source": "Google Cloud Blog",
+          "published_at": "2026-11-26T05:10:00Z",
+          "snippet": "Google updated Agent Development Kit to version 2.15, expanding native Pydantic output_schema support alongside tool use and introducing per-turn usage_metadata telemetry on Runner events.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "AI agents and tool use"
+          ]
+        },
+        {
+          "article_id": "ea7fa9144a1d718f",
+          "canonical_url": "https://openai.com/news/browser-agent-evaluation-harness",
+          "url": "https://openai.com/news/browser-agent-evaluation-harness",
+          "title": "OpenAI publishes multi-step browser agent benchmark exposing form-handling gaps",
+          "source": "OpenAI News",
+          "published_at": "2026-11-25T22:00:00Z",
+          "snippet": "OpenAI released an open benchmark evaluating autonomous web agents on multi-step enterprise forms, showing strong navigation accuracy but elevated failure rates when pages mutate dynamically mid-action.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "AI agents and tool use"
+          ]
+        },
+        {
+          "article_id": "4dbbfdda19585e23",
+          "canonical_url": "https://blog.vllm.ai/2026/11/26/vllm-0-14-disaggregated-prefill",
+          "url": "https://blog.vllm.ai/2026/11/26/vllm-0-14-disaggregated-prefill",
+          "title": "vLLM 0.14 ships disaggregated prefill-decode scheduling to cut P99 TTFT by 35%",
+          "source": "vLLM Blog",
+          "published_at": "2026-11-26T04:00:00Z",
+          "snippet": "vLLM 0.14 separates prompt prefill workers from token decode pools over RDMA KV-cache transfer, reducing 99th-percentile time-to-first-token by 35% on mixed long-context production traffic.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Inference optimization"
+          ]
+        },
+        {
+          "article_id": "ea521fc45c190618",
+          "canonical_url": "https://developer.nvidia.com/blog/fp4-blackwell-kernels-70b-throughput",
+          "url": "https://developer.nvidia.com/blog/fp4-blackwell-kernels-70b-throughput",
+          "title": "New FP4 TensorRT-LLM kernels boost 70B model serving throughput by 2.1x on Blackwell",
+          "source": "NVIDIA Developer Blog",
+          "published_at": "2026-11-25T20:30:00Z",
+          "snippet": "NVIDIA released updated FP4 quantization kernels for TensorRT-LLM on Blackwell GPUs, delivering 2.1x higher output tokens per second on 70B-parameter models with under 0.4% accuracy drop on MMLU-Pro.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Inference optimization"
+          ]
+        },
+        {
+          "article_id": "323a9a304fa1b775",
+          "canonical_url": "https://pytorch.org/blog/torchao-0-9-speculative-decoding-trees",
+          "url": "https://pytorch.org/blog/torchao-0-9-speculative-decoding-trees",
+          "title": "TorchAO 0.9 introduces tree-based speculative decoding for low-batch inference",
+          "source": "PyTorch Blog",
+          "published_at": "2026-11-25T18:00:00Z",
+          "snippet": "PyTorch maintainers shipped TorchAO 0.9 with fused draft-model tree verification kernels, achieving 1.6x to 1.9x decode speedups at batch sizes 1 to 4 without altering output distributions.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Inference optimization"
+          ]
+        },
+        {
+          "article_id": "3229183f3533b9ea",
+          "canonical_url": "https://www.technologyreview.com/2026/11/26/frontier-labs-shared-disclosure",
+          "url": "https://www.technologyreview.com/2026/11/26/frontier-labs-shared-disclosure",
+          "title": "Frontier labs adopt shared red-teaming disclosure protocol",
+          "source": "MIT Tech Review AI",
+          "published_at": "2026-11-26T03:00:00Z",
+          "snippet": "Four major AI labs agreed on a common disclosure timeline for flaws.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "7e5a4b2e91c6795d",
+          "canonical_url": "https://arstechnica.com/ai/2026/11/mistral-enterprise-hub-governance",
+          "url": "https://arstechnica.com/ai/2026/11/mistral-enterprise-hub-governance",
+          "title": "Mistral launches Enterprise Hub for on-premise model governance",
+          "source": "Ars Technica",
+          "published_at": "2026-11-25T14:00:00Z",
+          "snippet": "Mistral introduced an on-premise governance suite allowing regulated enterprises to audit prompts, manage fine-tuned model weights, and enforce role-based access policies.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "general_tech_science",
+      "description": "10 non-AI clean energy and robotics articles validating domain generalization.",
+      "recipient": {
+        "id": "eval-tech-science",
+        "email_address": "science@example.com",
+        "subject_prefix": "[Clean Energy & Robotics Digest]",
+        "enabled": true,
+        "topics": [
+          "Clean energy and grid storage",
+          "Humanoid and industrial robotics"
+        ],
+        "rss_feeds": [],
+        "lookback_hours": 36,
+        "max_highlights": 6
+      },
+      "available_topics": [
+        "Clean energy and grid storage",
+        "Humanoid and industrial robotics"
+      ],
+      "seen_urls": [
+        "https://canarymedia.com/articles/2026/11/20/prior-solar-tariff-update"
+      ],
+      "articles": [
+        {
+          "article_id": "c0a361c158647547",
+          "canonical_url": "https://www.canarymedia.com/articles/long-duration-storage/form-energy-minnesota-iron-air",
+          "url": "https://www.canarymedia.com/articles/long-duration-storage/form-energy-minnesota-iron-air",
+          "title": "Form Energy completes first commercial 100-hour iron-air battery site in Minnesota",
+          "source": "Canary Media",
+          "published_at": "2026-11-26T08:00:00Z",
+          "snippet": "Form Energy commissioned its 10 MW / 1,000 MWh iron-air battery facility adjacent to a retiring Minnesota coal plant, marking the first utility-scale deployment of 100-hour multi-day storage on the US grid.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "c078de7c76501d0d",
+          "canonical_url": "https://www.reuters.com/business/energy/europe-offshore-wind-reaches-41gw-2026-11-26",
+          "url": "https://www.reuters.com/business/energy/europe-offshore-wind-reaches-41gw-2026-11-26",
+          "title": "European offshore wind capacity hits 41 GW as North Sea interconnectors come online",
+          "source": "Reuters Energy",
+          "published_at": "2026-11-26T07:20:00Z",
+          "snippet": "Europe reached 41 gigawatts of installed offshore wind capacity following the energization of two high-voltage subsea interconnectors linking wind farms in the North Sea to grids in Germany and the UK.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "5ef9650b353369cb",
+          "canonical_url": "https://www.utilitydive.com/news/caiso-batteries-28-percent-evening-peak/734120",
+          "url": "https://www.utilitydive.com/news/caiso-batteries-28-percent-evening-peak/734120",
+          "title": "Grid batteries supplied 28% of California evening peak demand for 45 straight days",
+          "source": "Utility Dive",
+          "published_at": "2026-11-26T06:00:00Z",
+          "snippet": "California ISO operational data showed utility-scale lithium-ion storage met an average of 28% of evening net-peak electricity demand across 45 consecutive days, curbing natural gas peaker dispatch.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "b292be495a300a78",
+          "canonical_url": "https://news.mit.edu/2026/solid-state-sodium-electrolyte-room-temp",
+          "url": "https://news.mit.edu/2026/solid-state-sodium-electrolyte-room-temp",
+          "title": "MIT researchers demonstrate room-temperature solid-state sodium battery electrolyte",
+          "source": "MIT News",
+          "published_at": "2026-11-25T21:00:00Z",
+          "snippet": "Materials scientists at MIT synthesized a ceramic-polymer sodium electrolyte achieving ionic conductivity comparable to liquid lithium cells at room temperature without requiring cobalt or nickel.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "28bc3fc8566ef5a4",
+          "canonical_url": "https://www.bloomberg.com/news/articles/2026-11-25/fervo-utah-geothermal-100mw",
+          "url": "https://www.bloomberg.com/news/articles/2026-11-25/fervo-utah-geothermal-100mw",
+          "title": "Fervo Energy brings 100 MW enhanced geothermal phase online in southwestern Utah",
+          "source": "Bloomberg Green",
+          "published_at": "2026-11-25T19:00:00Z",
+          "snippet": "Fervo Energy started commercial power delivery from the first 100 MW phase of its Cape Station enhanced geothermal project in Utah, supplying firm carbon-free baseload electricity under utility contracts.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Clean energy and grid storage"
+          ]
+        },
+        {
+          "article_id": "ba295e05306d1642",
+          "canonical_url": "https://spectrum.ieee.org/boston-dynamics-electric-atlas-hyundai-pilot",
+          "url": "https://spectrum.ieee.org/boston-dynamics-electric-atlas-hyundai-pilot",
+          "title": "Boston Dynamics deploys electric Atlas humanoids in Hyundai assembly pilot",
+          "source": "IEEE Spectrum",
+          "published_at": "2026-11-26T08:30:00Z",
+          "snippet": "Boston Dynamics began a factory pilot deploying fully electric Atlas humanoid robots to sequence heavy suspension brackets on a Hyundai automotive line, testing autonomous recovery from misaligned parts.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Humanoid and industrial robotics"
+          ]
+        },
+        {
+          "article_id": "cbed1bc6815028df",
+          "canonical_url": "https://techcrunch.com/2026/11/26/agility-robotics-robofab-expansion-10000-units",
+          "url": "https://techcrunch.com/2026/11/26/agility-robotics-robofab-expansion-10000-units",
+          "title": "Agility Robotics expands RoboFab facility to 10,000-unit annual Digit capacity",
+          "source": "TechCrunch Robotics",
+          "published_at": "2026-11-26T05:45:00Z",
+          "snippet": "Agility Robotics completed phase two of its Oregon RoboFab manufacturing plant, raising planned production capacity to 10,000 bipedal Digit warehouse robots per year alongside new logistics customer orders.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Humanoid and industrial robotics"
+          ]
+        },
+        {
+          "article_id": "7ef5a979a71730a0",
+          "canonical_url": "https://www.therobotreport.com/fanuc-crx-35-vision-palletizer",
+          "url": "https://www.therobotreport.com/fanuc-crx-35-vision-palletizer",
+          "title": "Fanuc launches 35 kg payload vision-guided collaborative palletizer for mid-sized plants",
+          "source": "The Robot Report",
+          "published_at": "2026-11-25T23:10:00Z",
+          "snippet": "Fanuc unveiled a 35-kilogram collaborative palletizing system with integrated 3D depth vision that adapts to mixed-SKU shipping cartons without custom safety caging.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Humanoid and industrial robotics"
+          ]
+        },
+        {
+          "article_id": "e11be77927a1de28",
+          "canonical_url": "https://www.nature.com/articles/s44182-026-00412-soft-grippers",
+          "url": "https://www.nature.com/articles/s44182-026-00412-soft-grippers",
+          "title": "Soft pneumatic grippers hit 98.4% grasp success on fragile fruit harvesting trials",
+          "source": "Nature Robotics",
+          "published_at": "2026-11-25T17:30:00Z",
+          "snippet": "A peer-reviewed field trial reported soft silicone pneumatic grippers equipped with tactile strain sensors achieved 98.4% damage-free harvest rates on strawberries and tomatoes in commercial greenhouses.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Humanoid and industrial robotics"
+          ]
+        },
+        {
+          "article_id": "f544196c6e536052",
+          "canonical_url": "https://www.wired.com/story/autonomous-subsea-robots-north-atlantic-cables",
+          "url": "https://www.wired.com/story/autonomous-subsea-robots-north-atlantic-cables",
+          "title": "Autonomous subsea inspection robots complete 30-day North Atlantic cable survey",
+          "source": "Wired Science",
+          "published_at": "2026-11-25T15:00:00Z",
+          "snippet": "A fleet of untethered autonomous underwater vehicles finished a 30-day inspection of 1,400 kilometers of North Atlantic fiber-optic subsea cables, detecting anchor-scour hazards without support vessels.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Humanoid and industrial robotics"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "sparse_day",
+      "description": "Only 2 articles across 3 topics (Biotech has 0 articles) verifying zero-hallucination restraint.",
+      "recipient": {
+        "id": "eval-sparse",
+        "email_address": "deeptech@example.com",
+        "subject_prefix": "[Deep Tech Digest]",
+        "enabled": true,
+        "topics": [
+          "Quantum computing",
+          "Biotech and CRISPR",
+          "Semiconductor manufacturing"
+        ],
+        "rss_feeds": [],
+        "lookback_hours": 36,
+        "max_highlights": 6
+      },
+      "available_topics": [
+        "Quantum computing",
+        "Semiconductor manufacturing"
+      ],
+      "seen_urls": [],
+      "articles": [
+        {
+          "article_id": "a758921aec8b9077",
+          "canonical_url": "https://www.nature.com/articles/s41567-026-02891-quantum-threshold",
+          "url": "https://www.nature.com/articles/s41567-026-02891-quantum-threshold",
+          "title": "Google Quantum AI extends below-threshold error suppression on 105-qubit chip",
+          "source": "Nature Physics",
+          "published_at": "2026-11-26T09:10:00Z",
+          "snippet": "Researchers demonstrated exponential error rate reduction as surface-code distance scaled from 3 to 7 on a 105-qubit superconducting processor, doubling logical qubit lifetime over the best physical qubit.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Quantum computing"
+          ]
+        },
+        {
+          "article_id": "d9dc346a955240d1",
+          "canonical_url": "https://semiengineering.com/tsmc-n2-baoshan-risk-production-power-gains",
+          "url": "https://semiengineering.com/tsmc-n2-baoshan-risk-production-power-gains",
+          "title": "TSMC begins N2 gate-all-around risk production at Baoshan fab",
+          "source": "Semiconductor Engineering",
+          "published_at": "2026-11-26T06:40:00Z",
+          "snippet": "TSMC initiated risk production on its 2-nanometer nanosheet process in Baoshan, reporting 15% lower power draw at iso-frequency compared with N3E while maintaining target defect density yields.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "Semiconductor manufacturing"
+          ]
+        }
+      ]
+    }
+  ]
+}
