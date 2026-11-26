@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from agentic_emailer.ingestion.rss import normalize_url
 from agentic_emailer.models import (
     Citation,
@@ -94,7 +96,16 @@ def verify_digest_draft(
         seen_in_this_highlight: set[str] = set()
         for citation in highlight.citations:
             cited_url = citation.url.strip()
+            scheme = urlparse(cited_url).scheme.lower()
             norm_url = normalize_url(cited_url)
+
+            if scheme not in ("http", "https"):
+                if cited_url not in invalid_urls:
+                    invalid_urls.append(cited_url)
+                errors.append(
+                    f"Highlight #{idx} ({highlight.title!r}) cites a non-HTTP(S) URL: {cited_url}"
+                )
+                continue
 
             url_allowed = cited_url in allowed_raw_urls or norm_url in allowed_canonical_urls
             if not url_allowed:

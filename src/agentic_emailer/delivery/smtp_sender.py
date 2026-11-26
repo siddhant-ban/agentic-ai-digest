@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import ssl
 import time
 from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
@@ -77,9 +78,10 @@ class SmtpEmailSender:
                     attempt,
                     self.max_retries,
                 )
+                tls_context = ssl.create_default_context()
                 with smtplib.SMTP(self.host, self.port, timeout=self.timeout) as server:
                     server.ehlo()
-                    server.starttls()
+                    server.starttls(context=tls_context)
                     server.ehlo()
                     server.login(self.sender, self.password)
                     server.sendmail(self.sender, [recipient.email_address], message.as_string())

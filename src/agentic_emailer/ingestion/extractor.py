@@ -10,7 +10,6 @@ import socket
 from urllib.parse import urljoin, urlparse
 
 import httpx
-import trafilatura
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +30,14 @@ USER_AGENT = "AgenticEmailer/1.0 (+https://github.com/siddhant-ban/agentic-ai-di
 
 def _is_public_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Return True only if the IP address is globally routable on the public internet."""
-    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped is not None:
-        ip_obj = ip_obj.ipv4_mapped
+    if isinstance(ip_obj, ipaddress.IPv6Address):
+        if ip_obj.ipv4_mapped is not None:
+            return _is_public_ip(ip_obj.ipv4_mapped)
+        if ip_obj.sixtofour is not None:
+            return _is_public_ip(ip_obj.sixtofour)
+        if ip_obj.teredo is not None:
+            server_ip, client_ip = ip_obj.teredo
+            return _is_public_ip(server_ip) and _is_public_ip(client_ip)
     return bool(
         ip_obj.is_global
         and not ip_obj.is_private
@@ -153,9 +158,8 @@ async def fetch_url_safely(
 
                 if allowed_content_types is not None:
                     content_type = response.headers.get("content-type", "").lower()
-                    if content_type and not any(
-                        allowed in content_type for allowed in allowed_content_types
-                    ):
+                    media_type = content_type.split(";", 1)[0].strip()
+                    if media_type and media_type not in allowed_content_types:
                         logger.debug(
                             "Skipping %s due to unsupported content-type %r",
                             current_url,
@@ -222,6 +226,8 @@ async def extract_article_text(
         html_text = raw_bytes.decode(encoding, errors="replace")
         if not html_text.strip():
             return None
+
+        import trafilatura
 
         extracted = await asyncio.to_thread(
             trafilatura.extract,

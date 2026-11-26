@@ -17,7 +17,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
-from agentic_emailer.budget import RunBudgetTracker
+from agentic_emailer.budget import BudgetExceededError, RunBudgetTracker
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +82,11 @@ async def _run_adk_agent_once(
     agent: LlmAgent,
     prompt: str,
     budget: RunBudgetTracker,
+    trajectory: list[dict[str, Any]],
     *,
     app_name: str = "agentic_emailer",
     user_id: str = "system",
-) -> tuple[str, list[dict[str, Any]]]:
+) -> str:
     budget.assert_can_call_llm()
 
     session_service = InMemorySessionService()
@@ -105,7 +106,6 @@ async def _run_adk_agent_once(
     user_message = types.Content(role="user", parts=[types.Part(text=prompt)])
     model_name = agent.model if isinstance(agent.model, str) else None
 
-    trajectory: list[dict[str, Any]] = []
     pending_by_call_id: dict[str, dict[str, Any]] = {}
     final_text = ""
     last_non_empty_text = ""
@@ -135,7 +135,8 @@ async def _run_adk_agent_once(
                 )
                 recorded_llm_turn = True
 
-        for func_call in event.get_function_calls():
+        func_calls = event.get_function_calls()
+        for func_call in func_calls:
             entry: dict[str, Any] = {
                 "name": func_call.name or "",
                 "args": dict(func_call.args) if func_call.args else {},
@@ -145,6 +146,12 @@ async def _run_adk_agent_once(
             call_id = getattr(func_call, "id", None)
             if call_id:
                 pending_by_call_id[str(call_id)] = entry
+
+        # Guard against dispatching an unbudgeted follow-up turn after tool execution
+        if func_calls and not budget.can_call_llm():
+            raise BudgetExceededError(
+                f"LLM budget exhausted before next tool-response turn in {agent.name}"
+            )
 
         for func_resp in event.get_function_responses():
             summary = _summarize_tool_response(func_resp.response)
@@ -166,7 +173,7 @@ async def _run_adk_agent_once(
     if not recorded_llm_turn:
         budget.consume_llm_call(input_tokens=0, output_tokens=0, model=model_name)
 
-    return (final_text or last_non_empty_text), trajectory
+    return final_text or last_non_empty_text
 
 
 async def run_adk_agent(
@@ -182,15 +189,18 @@ async def run_adk_agent(
     Returns (final_response_text, tool_call_trajectory) while accounting all LLM calls
     and token usage against `budget`, retrying transient 429/5xx API errors.
     """
+    trajectory: list[dict[str, Any]] = []
     for attempt in range(MAX_TRANSIENT_RETRIES + 1):
         try:
-            return await _run_adk_agent_once(
+            response_text = await _run_adk_agent_once(
                 agent,
                 prompt,
                 budget,
+                trajectory,
                 app_name=app_name,
                 user_id=user_id,
             )
+            return response_text, trajectory
         except Exception as exc:
             if not _is_transient_genai_error(exc) or attempt >= MAX_TRANSIENT_RETRIES:
                 raise
