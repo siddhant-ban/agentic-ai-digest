@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agentic_emailer.agents.verifier import verify_digest_draft
+from agentic_emailer.agents.verifier import _is_valid_http_url, verify_digest_draft
 from agentic_emailer.ingestion.rss import normalize_url
 from agentic_emailer.models import DigestDraft, RawArticle
 
@@ -151,7 +151,7 @@ def compute_case_metrics(
             total_citations += 1
             raw_u = cit.url.strip()
             norm_u = normalize_url(raw_u)
-            if raw_u in allowed_raw or norm_u in allowed_canon:
+            if _is_valid_http_url(raw_u) and (raw_u in allowed_raw or norm_u in allowed_canon):
                 grounded_citations += 1
             is_stale = raw_u in normalized_seen or norm_u in normalized_seen
             is_dup = norm_u in seen_in_digest
@@ -235,12 +235,12 @@ def evaluate_trajectory_case(
     unnecessary_searches = max(0, len(search_calls) - max_searches)
 
     if expected_set:
-        # Score combines scrape precision (avoiding forbidden scrapes) and recall of thin snippets,
-        # penalized for unnecessary searches beyond max_searches.
+        # Score combines scrape precision (penalizing forbidden or duplicate scrapes) and recall
+        # of thin snippets, minus a penalty for unnecessary searches beyond max_searches.
         if not scrape_ids:
             scrape_score = 0.0
         else:
-            precision = expected_hits / len(unique_scrapes)
+            precision = expected_hits / len(scrape_ids)
             recall = expected_hits / len(expected_set)
             scrape_score = 0.6 * precision + 0.4 * recall
         search_penalty = 0.2 * unnecessary_searches

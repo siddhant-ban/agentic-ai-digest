@@ -33,6 +33,9 @@ def test_url_normalization_strips_tracking_and_dedups_id() -> None:
     assert canon_a == canon_b
     assert make_article_id(canon_a) == make_article_id(canon_b)
     assert len(make_article_id(canon_a)) == 16
+    # Malformed ports / broken IPv6 must never raise unhandled ValueError
+    assert normalize_url("https://example.com:99999/bad") == "https://example.com:99999/bad"
+    assert normalize_url("http://[::1/bad") == "http://[::1/bad"
 
 
 def test_verifier_rejects_hallucinated_url() -> None:
@@ -63,6 +66,36 @@ def test_verifier_rejects_hallucinated_url() -> None:
     assert not result.passed
     assert hallucinated_url in result.invalid_urls
     assert result.errors
+
+    # Malformed port and broken IPv6 citation URLs must be rejected cleanly without raising
+    malformed_draft = draft.model_copy(
+        update={
+            "highlights": [
+                draft.highlights[0].model_copy(
+                    update={
+                        "citations": [
+                            Citation(
+                                source_name="Bad Port",
+                                url="https://blog.example.com:99999/bad",
+                                article_id="0000000000000001",
+                            ),
+                            Citation(
+                                source_name="Broken IPv6",
+                                url="http://[::1/broken",
+                                article_id="0000000000000002",
+                            ),
+                        ]
+                    }
+                )
+            ]
+        }
+    )
+    malformed_result = verify_digest_draft(
+        malformed_draft, [allowed], seen_urls=set(), topics=["LLM releases"]
+    )
+    assert not malformed_result.passed
+    assert "https://blog.example.com:99999/bad" in malformed_result.invalid_urls
+    assert "http://[::1/broken" in malformed_result.invalid_urls
 
 
 def test_verifier_rejects_stale_seen_url() -> None:

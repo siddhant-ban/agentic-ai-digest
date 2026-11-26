@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     research_model: str = "gemini-3.1-flash-lite"
     synthesis_model: str = "gemini-3.1-flash-lite"
     critic_model: str = "gemini-3.1-flash-lite"
+    eval_judge_model: str | None = None
     embedding_model: str = "gemini-embedding-001"
 
     # Hard per-run budget ceilings

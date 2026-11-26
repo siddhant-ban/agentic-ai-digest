@@ -234,17 +234,43 @@ def run_deterministic_eval(
             )
         )
 
-    # Validate trajectory dataset schemas deterministically
+    # Validate trajectory dataset schemas and deterministically re-score cached trajectories
     trajectory_results: list[TrajectoryEvalResult] = []
     for raw_traj in trajectory_data["cases"]:
-        _ = [_hydrate_article(a) for a in raw_traj["articles"]]
+        hydrated = [_hydrate_article(a) for a in raw_traj["articles"]]
+        hydrated_ids = {a.article_id for a in hydrated}
+        expected_ids = list(raw_traj.get("expected_scrape_ids") or [])
+        forbidden_ids = list(raw_traj.get("forbidden_scrape_ids") or [])
+        missing_ids = (set(expected_ids) | set(forbidden_ids)) - hydrated_ids
+        if missing_ids:
+            raise ValueError(
+                f"Trajectory case {raw_traj['case_id']!r} references unknown article_ids: "
+                f"{sorted(missing_ids)}"
+            )
         traj_list = baseline.trajectories if baseline else []
         cached_traj = next(
             (t for t in traj_list if t.case_id == raw_traj["case_id"]),
             None,
         )
         if cached_traj is not None:
-            trajectory_results.append(cached_traj)
+            replayed_steps: list[dict[str, Any]] = [
+                {"name": "fetch_article_content", "args": {"article_id": art_id}}
+                for art_id in cached_traj.scrape_calls
+            ] + [
+                {"name": "search_web_news", "args": dict(call_args)}
+                for call_args in cached_traj.search_calls
+            ]
+            trajectory_results.append(
+                evaluate_trajectory_case(
+                    str(raw_traj["case_id"]),
+                    replayed_steps,
+                    expected_scrape_ids=expected_ids,
+                    forbidden_scrape_ids=forbidden_ids,
+                    max_searches=int(raw_traj.get("max_searches", 0)),
+                    max_scrapes=raw_traj.get("max_scrapes"),
+                    latency_ms=cached_traj.latency_ms,
+                )
+            )
 
     summary = aggregate_metrics(case_results, trajectory_results, estimated_cost_usd=0.0)
     failures = _check_hard_gates(summary, mode="deterministic")
@@ -263,9 +289,12 @@ async def run_full_eval(
     corpus_path: Path,
     trajectory_path: Path,
     settings: Settings,
+    *,
+    judge_model: str | None = None,
 ) -> EvalReport:
     """Execute live ADK Synthesis/Verifier/Critic + ResearchAgent trajectories + LLM-as-judge."""
-    settings.apply_genai_env()
+    settings.apply_genai_env(base_dir=EVALS_DIR.parent)
+    resolved_judge_model = judge_model or settings.eval_judge_model or settings.critic_model
     corpus_data = _load_json(corpus_path)
     trajectory_data = _load_json(trajectory_path)
 
@@ -304,7 +333,7 @@ async def run_full_eval(
             articles,
             profile.topics,
             seen_urls,
-            model=settings.critic_model,
+            model=resolved_judge_model,
             budget=budget,
         )
 
@@ -391,6 +420,7 @@ async def run_full_eval(
             "research_model": settings.research_model,
             "synthesis_model": settings.synthesis_model,
             "critic_model": settings.critic_model,
+            "judge_model": resolved_judge_model,
         },
         timestamp_utc=datetime.now(UTC).isoformat(),
         summary=summary,
@@ -437,6 +467,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to write full eval JSON report.",
     )
     parser.add_argument(
+        "--judge-model",
+        type=str,
+        default=None,
+        help=(
+            "Optional Gemini model override for LLM-as-judge "
+            "(default: EVAL_JUDGE_MODEL or critic_model)."
+        ),
+    )
+    parser.add_argument(
         "--save-baseline",
         action="store_true",
         help="Write this run's JSON report to --baseline (default: evals/reports/baseline.json).",
@@ -458,7 +497,14 @@ def _run_cli(args: argparse.Namespace) -> int:
         report = run_deterministic_eval(args.corpus, args.trajectories, baseline_report)
     else:
         settings = Settings()
-        report = asyncio.run(run_full_eval(args.corpus, args.trajectories, settings))
+        report = asyncio.run(
+            run_full_eval(
+                args.corpus,
+                args.trajectories,
+                settings,
+                judge_model=args.judge_model,
+            )
+        )
 
     safe_print(_format_scorecard_markdown(report, baseline_report))
 

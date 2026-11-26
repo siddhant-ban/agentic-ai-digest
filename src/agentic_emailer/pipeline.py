@@ -28,7 +28,7 @@ from agentic_emailer.delivery.renderer import (
     render_subject,
 )
 from agentic_emailer.delivery.smtp_sender import SmtpEmailSender
-from agentic_emailer.ingestion.rss import fetch_rss_feeds, normalize_url
+from agentic_emailer.ingestion.rss import fetch_rss_feeds, normalize_url, within_lookback
 from agentic_emailer.models import (
     CriticVerdict,
     DeliveryReceipt,
@@ -155,6 +155,7 @@ def discover_recipient_profiles(
 ) -> list[RecipientProfile]:
     """Load active RecipientProfiles from RECIPIENTS_JSON, recipients.json, or config fallback."""
     profiles: list[RecipientProfile] = []
+    source_loaded = False
 
     # 1. RECIPIENTS_JSON environment variable
     env_recipients = os.environ.get("RECIPIENTS_JSON", "").strip()
@@ -162,6 +163,7 @@ def discover_recipient_profiles(
         try:
             parsed = json.loads(env_recipients)
             items = parsed if isinstance(parsed, list) else [parsed]
+            source_loaded = True
             for idx, item in enumerate(items, start=1):
                 if isinstance(item, dict):
                     profile = _parse_recipient_dict(item, global_config, f"env_profile_{idx}")
@@ -171,7 +173,7 @@ def discover_recipient_profiles(
             logger.warning("Failed to parse RECIPIENTS_JSON env var: %s", exc)
 
     # 2. Local recipients.json file next to config_path (or CWD)
-    if not profiles:
+    if not source_loaded:
         candidates: list[Path] = []
         if config_path is not None:
             candidates.append(config_path.resolve().parent / "recipients.json")
@@ -182,18 +184,18 @@ def discover_recipient_profiles(
                 try:
                     data = json.loads(recipients_file.read_text(encoding="utf-8"))
                     items = data if isinstance(data, list) else [data]
+                    source_loaded = True
                     for idx, item in enumerate(items, start=1):
                         if isinstance(item, dict):
                             profile = _parse_recipient_dict(item, global_config, f"profile_{idx}")
                             if profile is not None:
                                 profiles.append(profile)
-                    if profiles:
-                        break
+                    break
                 except Exception as exc:
                     logger.warning("Could not parse %s: %s", recipients_file, exc)
 
     # 3. Single-recipient fallback in global_config (e.g. config.json / config.example.json)
-    if not profiles and global_config:
+    if not source_loaded and global_config:
         email_section = global_config.get("email")
         email_dict = email_section if isinstance(email_section, dict) else {}
         fallback_email = email_dict.get("recipient")
@@ -328,13 +330,29 @@ def _article_matches_topics(article: RawArticle, topics: list[str]) -> bool:
 def filter_clusters_for_recipient(
     clusters: list[StoryCluster],
     profile: RecipientProfile,
+    *,
+    feed_url_to_source: dict[str, str] | None = None,
 ) -> list[StoryCluster]:
-    """Select clusters whose articles match the recipient's feeds or configured topics."""
+    """Select clusters whose articles match the recipient's lookback window, feeds, or topics."""
     feed_names = {f.name.strip().lower() for f in profile.rss_feeds}
+    if feed_url_to_source:
+        for feed in profile.rss_feeds:
+            pooled_source = feed_url_to_source.get(normalize_url(feed.url))
+            if pooled_source:
+                feed_names.add(pooled_source.strip().lower())
+
     selected: list[StoryCluster] = []
     for cluster in clusters:
+        in_window = [
+            article
+            for article in cluster.articles
+            if within_lookback(article.published_at, profile.lookback_hours)
+        ]
+        if not in_window:
+            continue
+
         matched = False
-        for article in cluster.articles:
+        for article in in_window:
             if article.source.strip().lower() in feed_names:
                 matched = True
                 break
@@ -342,7 +360,10 @@ def filter_clusters_for_recipient(
                 matched = True
                 break
         if matched:
-            selected.append(cluster)
+            if len(in_window) == len(cluster.articles):
+                selected.append(cluster)
+            else:
+                selected.append(cluster.model_copy(update={"articles": in_window}))
         if len(selected) >= MAX_CLUSTERS_PER_RECIPIENT:
             break
     return selected
@@ -404,19 +425,20 @@ async def run_editorial_loop(
     max_revisions = settings.max_critic_revisions
     revision_feedback: str | None = None
     best_verified_draft: DigestDraft | None = None
+    best_verified_score: tuple[int, int] | None = None
     last_draft: DigestDraft | None = None
     last_verdict: CriticVerdict | None = None
     revisions_used = 0
 
     for attempt in range(max_revisions + 1):
-        if attempt > 0:
-            revisions_used = attempt
-
         if not budget.can_call_llm():
             logger.warning(
                 "LLM budget exhausted before synthesis attempt %d for %s", attempt, profile.id
             )
             break
+
+        if attempt > 0:
+            revisions_used = attempt
 
         try:
             draft, _ = await run_synthesis(
@@ -439,7 +461,13 @@ async def run_editorial_loop(
             revision_feedback = f"Previous synthesis failed with error: {exc}"
             continue
 
-        verification = verify_digest_draft(draft, allowed_articles, seen_urls, profile.topics)
+        verification = verify_digest_draft(
+            draft,
+            allowed_articles,
+            seen_urls,
+            profile.topics,
+            max_highlights=profile.max_highlights,
+        )
         if not verification.passed:
             logger.info(
                 "Deterministic verifier rejected draft (attempt %d) for %s: %s",
@@ -454,10 +482,9 @@ async def run_editorial_loop(
             )
             continue
 
-        best_verified_draft = draft
-
         # Short-circuit Critic when budget is exhausted after deterministic check passes
         if not budget.can_call_llm():
+            best_verified_draft = draft
             logger.warning(
                 "Skipping Critic for %s because LLM budget is exhausted; using verified draft",
                 profile.id,
@@ -470,6 +497,7 @@ async def run_editorial_loop(
             )
             last_verdict = verdict
         except BudgetExceededError as exc:
+            best_verified_draft = draft
             logger.warning(
                 "Critic hit budget limit for %s (%s); proceeding with verified draft",
                 profile.id,
@@ -477,12 +505,18 @@ async def run_editorial_loop(
             )
             break
         except Exception as exc:
+            best_verified_draft = draft
             logger.warning(
                 "Critic failed for %s (%s); proceeding with deterministically verified draft",
                 profile.id,
                 exc,
             )
             break
+
+        current_score = (verdict.faithfulness_score, verdict.relevance_score)
+        if best_verified_score is None or current_score >= best_verified_score:
+            best_verified_draft = draft
+            best_verified_score = current_score
 
         if verdict.approved:
             logger.info(
@@ -520,15 +554,30 @@ async def run_editorial_loop(
         )
         used_fallback = True
     else:
-        final_check = verify_digest_draft(final_draft, allowed_articles, seen_urls, profile.topics)
+        final_check = verify_digest_draft(
+            final_draft,
+            allowed_articles,
+            seen_urls,
+            profile.topics,
+            max_highlights=profile.max_highlights,
+        )
         if not final_check.passed:
             logger.warning(
                 "Final draft for %s failed grounding after max revisions; sanitizing citations",
                 profile.id,
             )
-            sanitized = sanitize_draft_grounding(final_draft, allowed_articles, seen_urls)
+            sanitized = sanitize_draft_grounding(
+                final_draft,
+                allowed_articles,
+                seen_urls,
+                max_highlights=profile.max_highlights,
+            )
             sanitized_check = verify_digest_draft(
-                sanitized, allowed_articles, seen_urls, profile.topics
+                sanitized,
+                allowed_articles,
+                seen_urls,
+                profile.topics,
+                max_highlights=profile.max_highlights,
             )
             if sanitized_check.passed and sanitized.highlights:
                 final_draft = sanitized
@@ -543,7 +592,11 @@ async def run_editorial_loop(
                 used_fallback = True
 
     final_verification = verify_digest_draft(
-        final_draft, allowed_articles, seen_urls, profile.topics
+        final_draft,
+        allowed_articles,
+        seen_urls,
+        profile.topics,
+        max_highlights=profile.max_highlights,
     )
     return EditorialResult(
         draft=final_draft,
@@ -555,25 +608,30 @@ async def run_editorial_loop(
 
 
 def _merge_config_into_settings(settings: Settings, global_config: dict[str, Any]) -> Settings:
-    """Apply non-secret defaults from legacy JSON config when env settings are empty."""
+    """Apply non-secret defaults from legacy JSON config only for fields not explicitly set."""
+    explicit_fields = settings.model_fields_set
     updates: dict[str, Any] = {}
     email_cfg = global_config.get("email")
     if isinstance(email_cfg, dict):
-        if not settings.smtp_sender and email_cfg.get("sender"):
+        if (
+            "smtp_sender" not in explicit_fields
+            and not settings.smtp_sender
+            and email_cfg.get("sender")
+        ):
             updates["smtp_sender"] = str(email_cfg["sender"]).strip()
-        if email_cfg.get("smtp_host") and "SMTP_HOST" not in os.environ:
+        if "smtp_host" not in explicit_fields and email_cfg.get("smtp_host"):
             updates["smtp_host"] = str(email_cfg["smtp_host"]).strip()
-        if email_cfg.get("smtp_port") and "SMTP_PORT" not in os.environ:
+        if "smtp_port" not in explicit_fields and email_cfg.get("smtp_port"):
             updates["smtp_port"] = int(email_cfg["smtp_port"])
 
     cfg_model = global_config.get("gemini_model")
     if isinstance(cfg_model, str) and cfg_model.strip():
         model_name = cfg_model.strip()
-        if "RESEARCH_MODEL" not in os.environ:
+        if "research_model" not in explicit_fields:
             updates["research_model"] = model_name
-        if "SYNTHESIS_MODEL" not in os.environ:
+        if "synthesis_model" not in explicit_fields:
             updates["synthesis_model"] = model_name
-        if "CRITIC_MODEL" not in os.environ:
+        if "critic_model" not in explicit_fields:
             updates["critic_model"] = model_name
 
     return settings.model_copy(update=updates) if updates else settings
@@ -626,7 +684,7 @@ async def run_digest_pipeline(
 
     # Stage 2: Pool unique RSS feeds and target topics across active recipients
     pooled_feeds: list[RssFeedConfig] = []
-    seen_feed_urls: set[str] = set()
+    feed_url_to_source: dict[str, str] = {}
     pooled_topics: list[str] = []
     seen_topics_lower: set[str] = set()
 
@@ -638,8 +696,8 @@ async def run_digest_pipeline(
                 pooled_topics.append(topic.strip())
         for feed in profile.rss_feeds:
             norm_feed_url = normalize_url(feed.url)
-            if norm_feed_url not in seen_feed_urls:
-                seen_feed_urls.add(norm_feed_url)
+            if norm_feed_url not in feed_url_to_source:
+                feed_url_to_source[norm_feed_url] = feed.name
                 pooled_feeds.append(feed)
 
     max_lookback = max((p.lookback_hours for p in active_profiles), default=36)
@@ -696,7 +754,11 @@ async def run_digest_pipeline(
 
     for profile in active_profiles:
         try:
-            recipient_clusters = filter_clusters_for_recipient(clusters, profile)
+            recipient_clusters = filter_clusters_for_recipient(
+                clusters,
+                profile,
+                feed_url_to_source=feed_url_to_source,
+            )
             recipient_articles = [a for c in recipient_clusters for a in c.articles]
 
             if gather_only:

@@ -16,6 +16,7 @@ from evals.metrics import JudgeScorecard
 
 logger = logging.getLogger(__name__)
 TRANSIENT_CODES = frozenset({429, 500, 502, 503, 504})
+JUDGE_TIMEOUT_SECONDS = 90.0
 
 JUDGE_SYSTEM_INSTRUCTION = """You are an impartial, rigorous AI evaluation judge grading a daily
 executive news digest strictly against its frozen input source articles.
@@ -66,33 +67,40 @@ async def evaluate_digest_with_judge(
 
     client = genai.Client()
     response = None
-    for attempt in range(3):
-        try:
-            response = await client.aio.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=JUDGE_SYSTEM_INSTRUCTION,
-                    temperature=0.0,
-                    response_mime_type="application/json",
-                    response_schema=JudgeScorecard,
-                ),
-            )
-            break
-        except genai_errors.APIError as exc:
-            is_transient = isinstance(exc, genai_errors.ServerError) or (
-                getattr(exc, "code", None) in TRANSIENT_CODES
-            )
-            if not is_transient or attempt >= 2:
-                raise
-            delay = 2.0 * (2**attempt)
-            logger.warning(
-                "Transient GenAI judge error (attempt %d/3): %s; retrying in %.1fs",
-                attempt + 1,
-                exc,
-                delay,
-            )
-            await asyncio.sleep(delay)
+    try:
+        for attempt in range(3):
+            try:
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=JUDGE_SYSTEM_INSTRUCTION,
+                            temperature=0.0,
+                            response_mime_type="application/json",
+                            response_schema=JudgeScorecard,
+                        ),
+                    ),
+                    timeout=JUDGE_TIMEOUT_SECONDS,
+                )
+                break
+            except (genai_errors.APIError, TimeoutError) as exc:
+                is_transient = isinstance(exc, (genai_errors.ServerError, TimeoutError)) or (
+                    getattr(exc, "code", None) in TRANSIENT_CODES
+                )
+                if not is_transient or attempt >= 2:
+                    raise
+                delay = 2.0 * (2**attempt)
+                logger.warning(
+                    "Transient GenAI judge error (attempt %d/3): %s; retrying in %.1fs",
+                    attempt + 1,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+    finally:
+        await client.aio.aclose()
+        client.close()
 
     assert response is not None
 
@@ -101,6 +109,10 @@ async def evaluate_digest_with_judge(
     cand_tok = int(getattr(usage, "candidates_token_count", None) or 0) if usage else 0
     thought_tok = int(getattr(usage, "thoughts_token_count", None) or 0) if usage else 0
     out_tok = cand_tok + thought_tok
+    if out_tok == 0 and usage is not None:
+        total_tok = int(getattr(usage, "total_token_count", None) or 0)
+        if total_tok > in_tok:
+            out_tok = total_tok - in_tok
     budget.consume_llm_call(input_tokens=in_tok, output_tokens=out_tok, model=model)
 
     raw_text = (response.text or "").strip()

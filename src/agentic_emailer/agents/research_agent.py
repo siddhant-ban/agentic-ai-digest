@@ -87,7 +87,18 @@ def build_research_tools(ctx: ResearchSessionContext) -> list[Callable[..., Any]
                 }
             )
 
-        found = await asyncio.to_thread(ctx.search_fn, query, ctx.lookback_hours, 8, topic)
+        try:
+            found = await asyncio.to_thread(ctx.search_fn, query, ctx.lookback_hours, 8, topic)
+        except Exception as exc:
+            logger.warning("search_web_news tool failed for %r: %s", query, exc)
+            return json.dumps(
+                {
+                    "status": "search_failed",
+                    "query": query,
+                    "topic": topic,
+                    "message": "Search provider temporarily unavailable.",
+                }
+            )
         added_summaries: list[dict[str, Any]] = []
         for article in found:
             if ctx.is_seen(article):
@@ -166,7 +177,11 @@ def build_research_tools(ctx: ResearchSessionContext) -> list[Callable[..., Any]
                 }
             )
 
-        extracted = await ctx.extract_fn(article.url, 4000)
+        try:
+            extracted = await ctx.extract_fn(article.url, 4000)
+        except Exception as exc:
+            logger.warning("fetch_article_content failed for %s: %s", article.article_id, exc)
+            extracted = None
         if not extracted:
             return json.dumps(
                 {
@@ -314,7 +329,9 @@ async def run_research_stage(
 
     trajectory: list[dict[str, Any]] = []
     try:
-        summary, trajectory = await run_adk_agent(agent, prompt, budget)
+        summary, _ = await run_adk_agent(
+            agent, prompt, budget, trajectory_out=trajectory
+        )
         logger.info(
             "ResearchAgent completed with %d tool call(s); corpus now has %d article(s). Note: %s",
             len(trajectory),

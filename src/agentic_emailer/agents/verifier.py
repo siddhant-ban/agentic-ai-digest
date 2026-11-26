@@ -16,6 +16,16 @@ from agentic_emailer.models import (
 MIN_EXECUTIVE_SUMMARY_CHARS = 30
 
 
+def _is_valid_http_url(url: str) -> bool:
+    """Return True iff url is a well-formed HTTP(S) URL with a valid port and host."""
+    try:
+        parsed = urlparse(url.strip())
+        _ = parsed.port
+    except ValueError:
+        return False
+    return parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname)
+
+
 def _build_allowed_lookups(
     allowed_articles: list[RawArticle],
 ) -> tuple[set[str], set[str], dict[str, RawArticle], dict[str, RawArticle]]:
@@ -55,6 +65,8 @@ def verify_digest_draft(
     allowed_articles: list[RawArticle],
     seen_urls: set[str],
     topics: list[str],
+    *,
+    max_highlights: int | None = None,
 ) -> VerificationResult:
     """Deterministically verify URL grounding, freshness, uniqueness, and basic completeness."""
     del topics  # Reserved for deterministic topic metadata checks; relevance is judged by Critic.
@@ -72,6 +84,11 @@ def verify_digest_draft(
         errors.append(
             f"executive_summary is too short ({len(draft.executive_summary.strip())} chars; "
             f"minimum {MIN_EXECUTIVE_SUMMARY_CHARS})."
+        )
+
+    if max_highlights is not None and len(draft.highlights) > max_highlights:
+        errors.append(
+            f"highlights count ({len(draft.highlights)}) exceeds max_highlights ({max_highlights})."
         )
 
     unseen_allowed = [
@@ -96,16 +113,17 @@ def verify_digest_draft(
         seen_in_this_highlight: set[str] = set()
         for citation in highlight.citations:
             cited_url = citation.url.strip()
-            scheme = urlparse(cited_url).scheme.lower()
-            norm_url = normalize_url(cited_url)
 
-            if scheme not in ("http", "https"):
+            if not _is_valid_http_url(cited_url):
                 if cited_url not in invalid_urls:
                     invalid_urls.append(cited_url)
                 errors.append(
-                    f"Highlight #{idx} ({highlight.title!r}) cites a non-HTTP(S) URL: {cited_url}"
+                    f"Highlight #{idx} ({highlight.title!r}) cites a malformed or non-HTTP(S) "
+                    f"URL: {cited_url}"
                 )
                 continue
+
+            norm_url = normalize_url(cited_url)
 
             url_allowed = cited_url in allowed_raw_urls or norm_url in allowed_canonical_urls
             if not url_allowed:
@@ -168,6 +186,8 @@ def sanitize_draft_grounding(
     draft: DigestDraft,
     allowed_articles: list[RawArticle],
     seen_urls: set[str],
+    *,
+    max_highlights: int | None = None,
 ) -> DigestDraft:
     """Deterministically strip ungrounded, stale, or duplicate citations from a draft.
 
@@ -183,13 +203,16 @@ def sanitize_draft_grounding(
     for highlight in draft.highlights:
         valid_citations: list[Citation] = []
         for citation in highlight.citations:
-            norm_url = normalize_url(citation.url)
-            if norm_url in normalized_seen or citation.url.strip() in normalized_seen:
+            cited_url = citation.url.strip()
+            if not _is_valid_http_url(cited_url):
+                continue
+            norm_url = normalize_url(cited_url)
+            if norm_url in normalized_seen or cited_url in normalized_seen:
                 continue
             if norm_url in used_urls:
                 continue
             matched = allowed_by_canonical.get(norm_url)
-            if matched is None:
+            if matched is None or not _is_valid_http_url(matched.url):
                 continue
             used_urls.add(norm_url)
             valid_citations.append(
@@ -204,5 +227,7 @@ def sanitize_draft_grounding(
             clean_highlights.append(
                 highlight.model_copy(update={"citations": valid_citations})
             )
+            if max_highlights is not None and len(clean_highlights) >= max_highlights:
+                break
 
     return draft.model_copy(update={"highlights": clean_highlights})

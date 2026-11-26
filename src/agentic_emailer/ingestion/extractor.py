@@ -14,7 +14,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 MAX_DOWNLOAD_BYTES = 1_048_576  # 1 MiB hard cap
+STREAM_CHUNK_BYTES = 16_384
 MAX_REDIRECTS = 5
+NAT64_WELL_KNOWN_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
 ALLOWED_CONTENT_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
 BLOCKED_HOSTNAMES = frozenset(
     {
@@ -38,6 +40,9 @@ def _is_public_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
         if ip_obj.teredo is not None:
             server_ip, client_ip = ip_obj.teredo
             return _is_public_ip(server_ip) and _is_public_ip(client_ip)
+        if ip_obj in NAT64_WELL_KNOWN_PREFIX:
+            embedded_v4 = ipaddress.IPv4Address(int(ip_obj) & 0xFFFFFFFF)
+            return _is_public_ip(embedded_v4)
     return bool(
         ip_obj.is_global
         and not ip_obj.is_private
@@ -56,6 +61,7 @@ def _is_safe_public_url(url: str) -> bool:
 
     try:
         parsed = urlparse(url.strip())
+        parsed_port = parsed.port
     except ValueError:
         return False
 
@@ -86,7 +92,7 @@ def _is_safe_public_url(url: str) -> bool:
     if literal_ip is not None:
         return _is_public_ip(literal_ip)
 
-    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    port = parsed_port or (443 if parsed.scheme.lower() == "https" else 80)
     try:
         addr_info = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except (OSError, socket.gaierror):
@@ -183,7 +189,7 @@ async def fetch_url_safely(
 
                 chunks: list[bytes] = []
                 total_read = 0
-                async for chunk in response.aiter_bytes():
+                async for chunk in response.aiter_bytes(chunk_size=STREAM_CHUNK_BYTES):
                     remaining = max_bytes - total_read
                     if remaining <= 0:
                         break
@@ -223,7 +229,10 @@ async def extract_article_text(
             return None
 
         final_url, raw_bytes, encoding = fetched
-        html_text = raw_bytes.decode(encoding, errors="replace")
+        try:
+            html_text = raw_bytes.decode(encoding, errors="replace")
+        except LookupError:
+            html_text = raw_bytes.decode("utf-8", errors="replace")
         if not html_text.strip():
             return None
 

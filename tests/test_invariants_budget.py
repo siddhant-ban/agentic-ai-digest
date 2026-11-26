@@ -29,6 +29,13 @@ def test_budget_tracker_enforces_llm_call_and_token_caps() -> None:
     with pytest.raises(BudgetExceededError):
         token_tracker.consume_llm_call(input_tokens=200, output_tokens=100)
 
+    # Longest-prefix model pricing matches versioned lite models accurately
+    lite_tracker = RunBudgetTracker()
+    lite_tracker.consume_llm_call(
+        input_tokens=100_000, output_tokens=0, model="gemini-2.0-flash-lite-001"
+    )
+    assert lite_tracker.estimated_cost_usd() == pytest.approx(0.0075)
+
 
 def test_budget_tracker_enforces_scrape_and_search_caps() -> None:
     tracker = RunBudgetTracker(max_scrapes=2, max_searches=1)
@@ -56,6 +63,7 @@ def test_ssrf_guard_blocks_private_and_metadata_ips() -> None:
         "http://localhost/internal",
         "http://[::1]/secret",
         "http://[::ffff:169.254.169.254]/latest/meta-data/",
+        "http://[64:ff9b::169.254.169.254]/latest/meta-data/",
         "http://[2002:7f00:0001::1]/loopback-6to4",
         "http://[2002:a9fe:a9fe::1]/metadata-6to4",
         "http://100.64.0.1/cgnat",
@@ -63,6 +71,9 @@ def test_ssrf_guard_blocks_private_and_metadata_ips() -> None:
         "http://172.16.0.5/metrics",
         "http://192.168.1.1/router",
         "http://0.0.0.0/",
+        "http://example.com:99999/invalid-port",
+        "http://example.com:abc/non-numeric-port",
+        "http://[::1/malformed-ipv6",
         "file:///etc/passwd",
         "ftp://1.1.1.1/file.txt",
         "http://user:pass@1.1.1.1/private",

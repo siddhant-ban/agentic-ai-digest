@@ -45,6 +45,8 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+# Keep TypeVar generic functions compatible with requires-python = ">=3.11"
+ignore = ["UP047"]
 
 [tool.mypy]
 python_version = "3.12"

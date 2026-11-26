@@ -12,6 +12,9 @@ class BudgetExceededError(RuntimeError):
 
 # Approximate USD per 1M tokens: (input_usd_per_1m, output_usd_per_1m)
 DEFAULT_MODEL_PRICING_USD_PER_1M: dict[str, tuple[float, float]] = {
+    "gemini-3.8-flash": (0.30, 2.50),
+    "gemini-3.5-flash": (0.30, 2.50),
+    "gemini-3.5-flash-lite": (0.10, 0.40),
     "gemini-3.1-flash-lite": (0.10, 0.40),
     "gemini-3.1-flash-lite-preview": (0.10, 0.40),
     "gemini-2.5-flash-lite": (0.10, 0.40),
@@ -141,8 +144,8 @@ class RunBudgetTracker:
     def _resolve_pricing(self, model_name: str) -> tuple[float, float]:
         if model_name in self.pricing_usd_per_1m:
             return self.pricing_usd_per_1m[model_name]
-        # Prefix match handles versioned model names (e.g., gemini-3.1-flash-lite-001)
-        for prefix, rates in self.pricing_usd_per_1m.items():
+        # Longest-prefix match handles versioned model names (e.g., gemini-2.0-flash-lite-001)
+        for prefix in sorted(self.pricing_usd_per_1m, key=len, reverse=True):
             if model_name.startswith(prefix):
-                return rates
+                return self.pricing_usd_per_1m[prefix]
         return FALLBACK_PRICING_USD_PER_1M

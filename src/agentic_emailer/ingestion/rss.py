@@ -38,14 +38,18 @@ HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 def normalize_url(url: str) -> str:
     """Canonicalize a URL by stripping tracking parameters, fragment, and trailing slash."""
-    parsed = urlparse(url.strip())
-    scheme = parsed.scheme.lower()
+    cleaned = url.strip()
+    try:
+        parsed = urlparse(cleaned)
+        port = parsed.port
+    except ValueError:
+        return cleaned
 
+    scheme = parsed.scheme.lower()
     hostname = (parsed.hostname or "").lower()
     if ":" in hostname and not hostname.startswith("["):
         hostname = f"[{hostname}]"
 
-    port = parsed.port
     is_default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
     if port is not None and not is_default_port:
         netloc = f"{hostname}:{port}"
@@ -152,7 +156,10 @@ async def _fetch_single_feed(
                 return []
 
             _, raw_bytes, encoding = fetched
-            xml_text = raw_bytes.decode(encoding, errors="replace")
+            try:
+                xml_text = raw_bytes.decode(encoding, errors="replace")
+            except LookupError:
+                xml_text = raw_bytes.decode("utf-8", errors="replace")
             parsed = await asyncio.to_thread(feedparser.parse, xml_text)
         except Exception as exc:
             logger.warning("Failed to fetch/parse RSS feed %s (%s): %s", feed.name, feed.url, exc)
@@ -170,7 +177,7 @@ async def _fetch_single_feed(
         for entry in parsed.entries[: max_per_feed * 3]:
             raw_url = str(entry.get("link") or entry.get("id") or "").strip()
             title = str(entry.get("title") or "").strip()
-            if not raw_url or not title or not raw_url.startswith(("http://", "https://")):
+            if not raw_url or not title or not raw_url.lower().startswith(("http://", "https://")):
                 continue
 
             published_at = _parse_entry_published(entry)

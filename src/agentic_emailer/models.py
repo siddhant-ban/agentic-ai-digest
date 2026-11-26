@@ -38,9 +38,17 @@ class RecipientProfile(BaseModel):
     lookback_hours: int = Field(default=36, ge=1, le=720)
     max_highlights: int = Field(default=8, ge=1, le=20)
 
-    @field_validator("id", "subject_prefix")
+    @field_validator("id")
     @classmethod
-    def _strip_text(cls, value: str) -> str:
+    def _strip_non_empty_id(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Recipient id must not be blank")
+        return cleaned
+
+    @field_validator("subject_prefix")
+    @classmethod
+    def _strip_subject_prefix(cls, value: str) -> str:
         return value.strip()
 
     @field_validator("email_address")
@@ -66,17 +74,32 @@ class RawArticle(BaseModel):
     discovered_via: Literal["rss", "search"] = "rss"
     topic_hints: list[str] = Field(default_factory=list)
 
+    @field_validator("article_id", "canonical_url", "url", "title", "source")
+    @classmethod
+    def _strip_non_empty_fields(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Field must not be blank")
+        return cleaned
+
     def to_prompt_block(self, max_body_chars: int = 2000) -> str:
         """Render a compact, citation-ready prompt block for LLM agents."""
-        date_str = (
-            self.published_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
-            if self.published_at
-            else "unknown date"
-        )
+        if self.published_at:
+            dt = (
+                self.published_at.replace(tzinfo=UTC)
+                if self.published_at.tzinfo is None
+                else self.published_at.astimezone(UTC)
+            )
+            date_str = dt.strftime("%Y-%m-%d %H:%M UTC")
+        else:
+            date_str = "unknown date"
         body_source = "Full Text" if self.full_text else "Snippet"
         raw_body = (self.full_text or self.snippet or "(no content)").strip()
-        if len(raw_body) > max_body_chars:
-            raw_body = raw_body[: max_body_chars - 3].rstrip() + "..."
+        if max_body_chars > 0 and len(raw_body) > max_body_chars:
+            if max_body_chars > 3:
+                raw_body = raw_body[: max_body_chars - 3].rstrip() + "..."
+            else:
+                raw_body = raw_body[:max_body_chars]
         hints = ", ".join(self.topic_hints) if self.topic_hints else "general"
         return (
             f"[Article ID: {self.article_id}]\n"
@@ -102,6 +125,14 @@ class StoryCluster(BaseModel):
     prior_story_summary: str | None = None
     prior_digest_date: str | None = None
 
+    @field_validator("cluster_id", "canonical_title")
+    @classmethod
+    def _strip_non_empty(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Field must not be blank")
+        return cleaned
+
     def to_prompt_block(self, max_body_chars: int = 1800) -> str:
         """Render the cluster and its source articles for Synthesis/Critic prompts."""
         lines = [
@@ -125,6 +156,14 @@ class Citation(BaseModel):
     url: str = Field(min_length=1)
     article_id: str = Field(min_length=1)
 
+    @field_validator("source_name", "url", "article_id")
+    @classmethod
+    def _strip_non_empty(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Citation field must not be blank")
+        return cleaned
+
 
 class DigestHighlight(BaseModel):
     """Single synthesized news highlight within a digest."""
@@ -136,6 +175,14 @@ class DigestHighlight(BaseModel):
     story_status: Literal["new", "developing_update"] = "new"
     citations: list[Citation] = Field(default_factory=list)
 
+    @field_validator("title", "topic", "summary", "why_it_matters")
+    @classmethod
+    def _strip_non_empty(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("DigestHighlight field must not be blank")
+        return cleaned
+
 
 class DigestDraft(BaseModel):
     """Structured output contract produced by SynthesisAgent."""
@@ -144,6 +191,14 @@ class DigestDraft(BaseModel):
     executive_summary: str = Field(min_length=1)
     highlights: list[DigestHighlight] = Field(default_factory=list)
     notable_trends: list[str] = Field(default_factory=list)
+
+    @field_validator("title", "executive_summary")
+    @classmethod
+    def _strip_non_empty(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("DigestDraft field must not be blank")
+        return cleaned
 
 
 class VerificationResult(BaseModel):

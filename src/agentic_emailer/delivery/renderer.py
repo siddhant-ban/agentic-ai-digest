@@ -22,8 +22,12 @@ def _sanitize_header_value(value: str) -> str:
 
 def _safe_href(url: str) -> str | None:
     cleaned = url.strip()
-    parsed = urlparse(cleaned)
-    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+    try:
+        parsed = urlparse(cleaned)
+        _ = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
         return None
     return html.escape(cleaned, quote=True)
 

@@ -74,6 +74,7 @@ def search_news(
         logger.warning("DDG news search failed for %r: %s", cleaned_query, news_exc)
 
     if not raw_results:
+        _wait_for_rate_limit()
         try:
             raw_results = list(
                 ddgs.text(cleaned_query, max_results=max_results, timelimit=timelimit) or []
@@ -86,7 +87,7 @@ def search_news(
     for item in raw_results:
         raw_url = str(item.get("url") or item.get("href") or item.get("link") or "").strip()
         title = str(item.get("title") or "").strip()
-        if not raw_url or not title or not raw_url.startswith(("http://", "https://")):
+        if not raw_url or not title or not raw_url.lower().startswith(("http://", "https://")):
             continue
 
         published_at = parse_published_datetime(item.get("date") or item.get("published"))
