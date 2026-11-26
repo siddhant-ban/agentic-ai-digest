@@ -25,10 +25,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: uv sync --all-groups
 
-      - name: Run Pytest with Coverage
-        run: uv run pytest --cov=. --cov-report=term-missing
+      - name: Lint (ruff)
+        run: uv run ruff check src tests evals
+
+      - name: Type Check (mypy)
+        run: uv run mypy src evals
+
+      - name: Run Deterministic Invariants
+        run: uv run pytest -v
+
+      - name: Run Deterministic Offline Evals
+        run: uv run agentic-emailer-eval --mode deterministic

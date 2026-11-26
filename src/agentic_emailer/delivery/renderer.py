@@ -85,10 +85,11 @@ def render_plain_text(draft: DigestDraft) -> str:
                     lines.append(f"  Sources: {sources}")
                 lines.append("")
 
-    if draft.notable_trends:
+    clean_trends = [trend.strip() for trend in draft.notable_trends if trend and trend.strip()]
+    if clean_trends:
         lines.append("NOTABLE TRENDS")
-        for trend in draft.notable_trends:
-            lines.append(f"* {trend.strip()}")
+        for trend in clean_trends:
+            lines.append(f"* {trend}")
         lines.append("")
 
     return "\n".join(lines).strip() + "\n"

@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agentic_emailer.agents.verifier import _is_valid_http_url, verify_digest_draft
-from agentic_emailer.ingestion.rss import normalize_url
+from agentic_emailer.ingestion.rss import normalize_seen_urls, normalize_url
 from agentic_emailer.models import DigestDraft, RawArticle
 
 
@@ -146,7 +146,7 @@ def compute_case_metrics(
     allowed_canon = {a.canonical_url.strip() for a in allowed_articles} | {
         normalize_url(a.url) for a in allowed_articles
     }
-    normalized_seen = {normalize_url(u) for u in seen_urls if u.strip()} | set(seen_urls)
+    normalized_seen = normalize_seen_urls(seen_urls)
 
     total_citations = 0
     grounded_citations = 0
@@ -172,6 +172,7 @@ def compute_case_metrics(
             for a in allowed_articles
             if a.canonical_url not in normalized_seen
             and normalize_url(a.url) not in normalized_seen
+            and a.url not in normalized_seen
         ]
         url_grounding_rate = 1.0 if not unseen_articles else 0.0
         duplicate_leakage_rate = 0.0

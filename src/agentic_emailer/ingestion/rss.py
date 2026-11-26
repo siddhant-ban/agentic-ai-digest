@@ -7,7 +7,7 @@ import hashlib
 import html
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -41,7 +41,10 @@ HTML_TAG_RE = re.compile(r"<[^>]+>")
 def is_valid_http_url(url: str) -> bool:
     """Return True iff url is a well-formed HTTP(S) URL with a valid host and port."""
     cleaned = url.strip()
-    if not cleaned or any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+    if (
+        not cleaned
+        or any(ord(ch) < 32 or ord(ch) == 127 or ch.isspace() for ch in cleaned)
+    ):
         return False
     try:
         parsed = urlparse(cleaned)
@@ -51,11 +54,36 @@ def is_valid_http_url(url: str) -> bool:
         return False
     if parsed.scheme.lower() not in ("http", "https") or not hostname:
         return False
-    if any(ch.isspace() for ch in hostname):
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if "%" in hostname or not hostname.strip("."):
         return False
     if port is not None and not (1 <= port <= 65535):
         return False
     return True
+
+
+def normalize_seen_urls(seen_urls: Iterable[str]) -> set[str]:
+    """Normalize a collection of previously seen URLs, skipping blank entries."""
+    normalized: set[str] = set()
+    for url in seen_urls:
+        cleaned = url.strip()
+        if not cleaned:
+            continue
+        normalized.add(cleaned)
+        normalized.add(normalize_url(cleaned))
+    return normalized
+
+
+def _first_non_blank(*values: Any) -> str:
+    """Return the first non-blank stripped string among candidate values."""
+    for value in values:
+        if value is None:
+            continue
+        cleaned = str(value).strip()
+        if cleaned:
+            return cleaned
+    return ""
 
 
 def normalize_url(url: str) -> str:
@@ -146,13 +174,15 @@ def within_lookback(published_at: datetime | None, lookback_hours: int) -> bool:
 
 def clean_snippet(raw_snippet: str, max_chars: int = MAX_SNIPPET_CHARS) -> str:
     """Strip HTML tags, unescape entities, collapse whitespace, and truncate cleanly."""
-    if not raw_snippet:
+    if not raw_snippet or max_chars <= 0:
         return ""
     unescaped = html.unescape(raw_snippet)
     stripped = HTML_TAG_RE.sub(" ", unescaped)
     compact = re.sub(r"\s+", " ", stripped).strip()
     if len(compact) <= max_chars:
         return compact
+    if max_chars <= 3:
+        return compact[:max_chars]
     return compact[: max_chars - 3].rstrip() + "..."
 
 
@@ -166,10 +196,10 @@ def _parse_feed_entries(
     if max_per_feed <= 0:
         return articles
 
-    for entry in entries[: max_per_feed * 3]:
+    for entry in entries:
         if not isinstance(entry, Mapping):
             continue
-        raw_url = str(entry.get("link") or entry.get("id") or "").strip()
+        raw_url = _first_non_blank(entry.get("link"), entry.get("id"))
         title = " ".join(html.unescape(str(entry.get("title") or "")).split())
         if not raw_url or not title or not is_valid_http_url(raw_url):
             continue
@@ -178,7 +208,7 @@ def _parse_feed_entries(
         if not within_lookback(published_at, lookback_hours):
             continue
 
-        raw_summary = str(entry.get("summary") or entry.get("description") or "")
+        raw_summary = _first_non_blank(entry.get("summary"), entry.get("description"))
         snippet = clean_snippet(raw_summary)
 
         canonical_url = normalize_url(raw_url)

@@ -33,6 +33,8 @@ USER_AGENT = "AgenticEmailer/1.0 (+https://github.com/siddhant-ban/agentic-ai-di
 def _is_public_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Return True only if the IP address is globally routable on the public internet."""
     if isinstance(ip_obj, ipaddress.IPv6Address):
+        if ip_obj.scope_id is not None:
+            return False
         if ip_obj.ipv4_mapped is not None:
             return _is_public_ip(ip_obj.ipv4_mapped)
         if ip_obj.sixtofour is not None:
@@ -59,8 +61,15 @@ def _is_safe_public_url(url: str) -> bool:
     if not url or not isinstance(url, str):
         return False
 
+    cleaned = url.strip()
+    if (
+        not cleaned
+        or any(ord(ch) < 32 or ord(ch) == 127 or ch.isspace() for ch in cleaned)
+    ):
+        return False
+
     try:
-        parsed = urlparse(url.strip())
+        parsed = urlparse(cleaned)
         parsed_port = parsed.port
     except ValueError:
         return False
@@ -68,10 +77,17 @@ def _is_safe_public_url(url: str) -> bool:
     if parsed.scheme.lower() not in ("http", "https"):
         return False
 
+    if parsed_port is not None and not (1 <= parsed_port <= 65535):
+        return False
+
     if parsed.username is not None or parsed.password is not None:
         return False
 
-    hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+    raw_hostname = (parsed.hostname or "").strip().lower()
+    if not raw_hostname or "%" in raw_hostname:
+        return False
+
+    hostname = raw_hostname.rstrip(".")
     if not hostname:
         return False
 

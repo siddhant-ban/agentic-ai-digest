@@ -13,6 +13,7 @@ from duckduckgo_search import DDGS
 from pydantic import ValidationError
 
 from agentic_emailer.ingestion.rss import (
+    _first_non_blank,
     clean_snippet,
     is_valid_http_url,
     make_article_id,
@@ -58,7 +59,7 @@ def _parse_search_results(
     for item in raw_results:
         if not isinstance(item, Mapping):
             continue
-        raw_url = str(item.get("url") or item.get("href") or item.get("link") or "").strip()
+        raw_url = _first_non_blank(item.get("url"), item.get("href"), item.get("link"))
         title = " ".join(html.unescape(str(item.get("title") or "")).split())
         if not raw_url or not title or not is_valid_http_url(raw_url):
             continue
@@ -67,9 +68,7 @@ def _parse_search_results(
         if not within_lookback(published_at, lookback_hours):
             continue
 
-        raw_snippet = str(
-            item.get("body") or item.get("excerpt") or item.get("snippet") or ""
-        )
+        raw_snippet = _first_non_blank(item.get("body"), item.get("excerpt"), item.get("snippet"))
         snippet = clean_snippet(raw_snippet)
         canonical_url = normalize_url(raw_url)
         article_id = make_article_id(canonical_url)

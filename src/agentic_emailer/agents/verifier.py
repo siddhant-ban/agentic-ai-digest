@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from agentic_emailer.ingestion.rss import is_valid_http_url, normalize_url
+from agentic_emailer.ingestion.rss import (
+    is_valid_http_url,
+    normalize_seen_urls,
+    normalize_url,
+)
 from agentic_emailer.models import (
     Citation,
     DigestDraft,
@@ -39,14 +43,7 @@ def _build_allowed_lookups(
 
 
 def _build_seen_lookup(seen_urls: set[str]) -> set[str]:
-    normalized: set[str] = set()
-    for url in seen_urls:
-        cleaned = url.strip()
-        if not cleaned:
-            continue
-        normalized.add(cleaned)
-        normalized.add(normalize_url(cleaned))
-    return normalized
+    return normalize_seen_urls(seen_urls)
 
 
 def verify_digest_draft(
@@ -87,7 +84,7 @@ def verify_digest_draft(
         and normalize_url(article.url) not in normalized_seen
         and article.url not in normalized_seen
     ]
-    if unseen_allowed and not draft.highlights:
+    if unseen_allowed and not draft.highlights and (max_highlights is None or max_highlights > 0):
         errors.append(
             "highlights list is empty even though unseen allowed articles were provided."
         )
@@ -183,6 +180,9 @@ def sanitize_draft_grounding(
     Guarantees that any highlight surviving sanitization cites only verified, unseen,
     deduplicated URLs with canonical source/article_id metadata.
     """
+    if max_highlights is not None and max_highlights <= 0:
+        return draft.model_copy(update={"highlights": []})
+
     _, _, _, allowed_by_canonical = _build_allowed_lookups(allowed_articles)
     normalized_seen = _build_seen_lookup(seen_urls)
 
@@ -190,6 +190,8 @@ def sanitize_draft_grounding(
     clean_highlights: list[DigestHighlight] = []
 
     for highlight in draft.highlights:
+        if max_highlights is not None and len(clean_highlights) >= max_highlights:
+            break
         valid_citations: list[Citation] = []
         for citation in highlight.citations:
             cited_url = citation.url.strip()
@@ -216,7 +218,5 @@ def sanitize_draft_grounding(
             clean_highlights.append(
                 highlight.model_copy(update={"citations": valid_citations})
             )
-            if max_highlights is not None and len(clean_highlights) >= max_highlights:
-                break
 
     return draft.model_copy(update={"highlights": clean_highlights})

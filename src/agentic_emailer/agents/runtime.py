@@ -128,6 +128,8 @@ async def _run_adk_agent_once(
                         event.error_message,
                     )
 
+                func_calls = event.get_function_calls()
+
                 if not event.partial:
                     token_counts = _extract_token_counts(event)
                     if token_counts is not None:
@@ -138,8 +140,14 @@ async def _run_adk_agent_once(
                             model=event.model_version or model_name,
                         )
                         recorded_llm_turn = True
+                    elif func_calls:
+                        budget.consume_llm_call(
+                            input_tokens=0,
+                            output_tokens=0,
+                            model=event.model_version or model_name,
+                        )
+                        recorded_llm_turn = True
 
-                func_calls = event.get_function_calls()
                 # Guard against dispatching an unbudgeted follow-up turn after tool execution
                 if func_calls and not budget.can_call_llm():
                     raise BudgetExceededError(

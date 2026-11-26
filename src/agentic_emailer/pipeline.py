@@ -28,7 +28,12 @@ from agentic_emailer.delivery.renderer import (
     render_subject,
 )
 from agentic_emailer.delivery.smtp_sender import SmtpEmailSender
-from agentic_emailer.ingestion.rss import fetch_rss_feeds, normalize_url, within_lookback
+from agentic_emailer.ingestion.rss import (
+    fetch_rss_feeds,
+    normalize_seen_urls,
+    normalize_url,
+    within_lookback,
+)
 from agentic_emailer.models import (
     CriticVerdict,
     DeliveryReceipt,
@@ -121,7 +126,14 @@ def _parse_recipient_dict(
         logger.warning("Recipient profile %s is missing an email address", profile_id)
         return None
 
-    topics = raw.get("topics") or global_config.get("topics") or []
+    raw_topics = raw.get("topics") if raw.get("topics") is not None else global_config.get("topics")
+    if isinstance(raw_topics, str):
+        topics_list = [raw_topics.strip()] if raw_topics.strip() else []
+    elif isinstance(raw_topics, list):
+        topics_list = [str(t).strip() for t in raw_topics if t is not None and str(t).strip()]
+    else:
+        topics_list = []
+
     rss_feeds = _parse_rss_feeds(raw.get("rss_feeds") or global_config.get("rss_feeds") or [])
     subject_prefix = (
         raw.get("subject_prefix")
@@ -129,16 +141,26 @@ def _parse_recipient_dict(
         or global_email_dict.get("subject_prefix")
         or "[Daily Digest]"
     )
-    lookback_hours = int(raw.get("lookback_hours") or global_config.get("lookback_hours") or 36)
-    max_highlights = int(raw.get("max_highlights") or global_config.get("max_highlights") or 8)
+    raw_lookback = (
+        raw.get("lookback_hours")
+        if raw.get("lookback_hours") is not None
+        else global_config.get("lookback_hours")
+    )
+    raw_max_highlights = (
+        raw.get("max_highlights")
+        if raw.get("max_highlights") is not None
+        else global_config.get("max_highlights")
+    )
 
     try:
+        lookback_hours = int(raw_lookback) if raw_lookback is not None else 36
+        max_highlights = int(raw_max_highlights) if raw_max_highlights is not None else 8
         return RecipientProfile(
             id=profile_id,
             email_address=str(recipient_email),
             subject_prefix=str(subject_prefix),
             enabled=True,
-            topics=[str(t).strip() for t in topics if str(t).strip()],
+            topics=topics_list,
             rss_feeds=rss_feeds,
             lookback_hours=lookback_hours,
             max_highlights=max_highlights,
@@ -411,7 +433,7 @@ async def run_editorial_loop(
 ) -> EditorialResult:
     """Execute the bounded Synthesis -> Deterministic Verifier -> Critic editorial loop."""
     allowed_articles = [article for cluster in clusters for article in cluster.articles]
-    normalized_seen = {normalize_url(u) for u in seen_urls if u.strip()} | set(seen_urls)
+    normalized_seen = normalize_seen_urls(seen_urls)
     unseen_articles = [
         article
         for article in allowed_articles
@@ -442,6 +464,7 @@ async def run_editorial_loop(
     max_revisions = settings.max_critic_revisions
     revision_feedback: str | None = None
     best_verified_draft: DigestDraft | None = None
+    best_verified_verdict: CriticVerdict | None = None
     best_verified_score: tuple[int, int] | None = None
     last_draft: DigestDraft | None = None
     last_verdict: CriticVerdict | None = None
@@ -502,6 +525,7 @@ async def run_editorial_loop(
         # Short-circuit Critic when budget is exhausted after deterministic check passes
         if not budget.can_call_llm():
             best_verified_draft = draft
+            best_verified_verdict = None
             logger.warning(
                 "Skipping Critic for %s because LLM budget is exhausted; using verified draft",
                 profile.id,
@@ -515,6 +539,7 @@ async def run_editorial_loop(
             last_verdict = verdict
         except BudgetExceededError as exc:
             best_verified_draft = draft
+            best_verified_verdict = None
             logger.warning(
                 "Critic hit budget limit for %s (%s); proceeding with verified draft",
                 profile.id,
@@ -523,6 +548,7 @@ async def run_editorial_loop(
             break
         except Exception as exc:
             best_verified_draft = draft
+            best_verified_verdict = None
             logger.warning(
                 "Critic failed for %s (%s); proceeding with deterministically verified draft",
                 profile.id,
@@ -533,6 +559,7 @@ async def run_editorial_loop(
         current_score = (verdict.faithfulness_score, verdict.relevance_score)
         if best_verified_score is None or current_score >= best_verified_score:
             best_verified_draft = draft
+            best_verified_verdict = verdict
             best_verified_score = current_score
 
         if verdict.approved:
@@ -615,11 +642,14 @@ async def run_editorial_loop(
         profile.topics,
         max_highlights=profile.max_highlights,
     )
+    selected_verdict = best_verified_verdict if best_verified_draft is not None else last_verdict
+    if used_fallback:
+        selected_verdict = None
     return EditorialResult(
         draft=final_draft,
         revisions=revisions_used,
         verification=final_verification,
-        critic_verdict=last_verdict,
+        critic_verdict=selected_verdict,
         used_fallback=used_fallback,
     )
 
@@ -638,8 +668,21 @@ def _merge_config_into_settings(settings: Settings, global_config: dict[str, Any
             updates["smtp_sender"] = str(email_cfg["sender"]).strip()
         if "smtp_host" not in explicit_fields and email_cfg.get("smtp_host"):
             updates["smtp_host"] = str(email_cfg["smtp_host"]).strip()
-        if "smtp_port" not in explicit_fields and email_cfg.get("smtp_port"):
-            updates["smtp_port"] = int(email_cfg["smtp_port"])
+        if "smtp_port" not in explicit_fields and email_cfg.get("smtp_port") is not None:
+            try:
+                parsed_port = int(email_cfg["smtp_port"])
+                if 1 <= parsed_port <= 65535:
+                    updates["smtp_port"] = parsed_port
+                else:
+                    logger.warning(
+                        "Ignoring out-of-range smtp_port in config: %r",
+                        email_cfg["smtp_port"],
+                    )
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Ignoring invalid smtp_port in config: %r",
+                    email_cfg["smtp_port"],
+                )
 
     cfg_model = global_config.get("gemini_model")
     if isinstance(cfg_model, str) and cfg_model.strip():

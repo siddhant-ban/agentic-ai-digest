@@ -16,7 +16,7 @@ from agentic_emailer.agents.research_agent import run_research_stage
 from agentic_emailer.budget import RunBudgetTracker
 from agentic_emailer.config import Settings
 from agentic_emailer.delivery.renderer import build_fallback_draft
-from agentic_emailer.ingestion.rss import make_article_id, normalize_url
+from agentic_emailer.ingestion.rss import make_article_id, normalize_seen_urls, normalize_url
 from agentic_emailer.models import DigestDraft, RawArticle, RecipientProfile
 from agentic_emailer.pipeline import build_singleton_clusters, run_editorial_loop, safe_print
 from evals.judges import evaluate_digest_with_judge
@@ -206,12 +206,13 @@ def run_deterministic_eval(
         seen_urls = set(raw_case.get("seen_urls") or [])
         available_topics = list(raw_case.get("available_topics") or profile.topics)
 
-        normalized_seen = {normalize_url(u) for u in seen_urls} | seen_urls
+        normalized_seen = normalize_seen_urls(seen_urls)
         unseen_articles = [
             a
             for a in articles
             if a.canonical_url not in normalized_seen
             and normalize_url(a.url) not in normalized_seen
+            and a.url not in normalized_seen
         ]
 
         draft = cached_drafts.get(case_id) or build_fallback_draft(

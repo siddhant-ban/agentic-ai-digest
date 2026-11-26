@@ -16,7 +16,7 @@ from agentic_emailer.agents.runtime import run_adk_agent
 from agentic_emailer.budget import BudgetExceededError, RunBudgetTracker
 from agentic_emailer.config import Settings
 from agentic_emailer.ingestion.extractor import extract_article_text
-from agentic_emailer.ingestion.rss import normalize_url
+from agentic_emailer.ingestion.rss import normalize_seen_urls, normalize_url
 from agentic_emailer.ingestion.search import search_news
 from agentic_emailer.models import RawArticle
 
@@ -70,6 +70,18 @@ def build_research_tools(ctx: ResearchSessionContext) -> list[Callable[..., Any]
         Returns:
             Compact JSON summary of newly discovered articles or budget status.
         """
+        cleaned_query = query.strip()
+        cleaned_topic = topic.strip() if topic else ""
+        if not cleaned_query:
+            return json.dumps(
+                {
+                    "status": "invalid_query",
+                    "query": query,
+                    "topic": cleaned_topic,
+                    "message": "Search query must not be blank.",
+                }
+            )
+
         if not ctx.budget.can_search():
             return json.dumps(
                 {
@@ -88,14 +100,20 @@ def build_research_tools(ctx: ResearchSessionContext) -> list[Callable[..., Any]
             )
 
         try:
-            found = await asyncio.to_thread(ctx.search_fn, query, ctx.lookback_hours, 8, topic)
+            found = await asyncio.to_thread(
+                ctx.search_fn,
+                cleaned_query,
+                ctx.lookback_hours,
+                8,
+                cleaned_topic or None,
+            )
         except Exception as exc:
-            logger.warning("search_web_news tool failed for %r: %s", query, exc)
+            logger.warning("search_web_news tool failed for %r: %s", cleaned_query, exc)
             return json.dumps(
                 {
                     "status": "search_failed",
-                    "query": query,
-                    "topic": topic,
+                    "query": cleaned_query,
+                    "topic": cleaned_topic,
                     "message": "Search provider temporarily unavailable.",
                 }
             )
@@ -105,8 +123,8 @@ def build_research_tools(ctx: ResearchSessionContext) -> list[Callable[..., Any]
                 continue
             existing = ctx.articles.get(article.article_id)
             if existing is None:
-                if topic and topic not in article.topic_hints:
-                    article.topic_hints.append(topic)
+                if cleaned_topic and cleaned_topic not in article.topic_hints:
+                    article.topic_hints.append(cleaned_topic)
                 ctx.articles[article.article_id] = article
                 added_summaries.append(
                     {
@@ -116,14 +134,14 @@ def build_research_tools(ctx: ResearchSessionContext) -> list[Callable[..., Any]
                         "snippet_len": len(article.snippet),
                     }
                 )
-            elif topic and topic not in existing.topic_hints:
-                existing.topic_hints.append(topic)
+            elif cleaned_topic and cleaned_topic not in existing.topic_hints:
+                existing.topic_hints.append(cleaned_topic)
 
         return json.dumps(
             {
                 "status": "ok",
-                "query": query,
-                "topic": topic,
+                "query": cleaned_query,
+                "topic": cleaned_topic,
                 "new_articles_added": len(added_summaries),
                 "articles": added_summaries,
             }
@@ -296,9 +314,7 @@ async def run_research_stage(
     extract_fn: ExtractFn | None = None,
 ) -> tuple[list[RawArticle], list[dict[str, Any]]]:
     """Execute the ADK ResearchAgent stage under RunBudgetTracker guardrails."""
-    normalized_seen = {normalize_url(u) for u in (seen_urls or set()) if u.strip()} | set(
-        seen_urls or set()
-    )
+    normalized_seen = normalize_seen_urls(seen_urls or set())
 
     corpus: dict[str, RawArticle] = {}
     visible_inventory: list[RawArticle] = []

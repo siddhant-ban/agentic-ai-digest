@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from agentic_emailer.agents.verifier import verify_digest_draft
+from agentic_emailer.agents.verifier import sanitize_draft_grounding, verify_digest_draft
+from agentic_emailer.delivery.renderer import build_fallback_draft
 from agentic_emailer.ingestion.rss import is_valid_http_url, make_article_id, normalize_url
 from agentic_emailer.models import Citation, DigestDraft, DigestHighlight, RawArticle
 
@@ -41,6 +42,10 @@ def test_url_normalization_strips_tracking_and_dedups_id() -> None:
     assert not is_valid_http_url("http://example.com:0/bad")
     assert not is_valid_http_url("http://[::1/bad")
     assert not is_valid_http_url("http://bad host/path")
+    assert not is_valid_http_url("https://example.com/path with spaces")
+    assert not is_valid_http_url("https://openai.com@evil.com/fake")
+    assert not is_valid_http_url("http://[2001:4860:4860::8888%25eth0]/")
+    assert not is_valid_http_url("http://.")
     assert not is_valid_http_url("http://example.com/a\nb")
 
 
@@ -193,3 +198,11 @@ def test_verifier_accepts_valid_verbatim_citations() -> None:
     )
     assert not capped.passed
     assert any("max_highlights" in err for err in capped.errors)
+
+    sanitized_zero = sanitize_draft_grounding(draft, [art_1, art_2], set(), max_highlights=0)
+    assert sanitized_zero.highlights == []
+    fallback_zero = build_fallback_draft([art_1, art_2], ["AI agents"], max_highlights=0)
+    assert fallback_zero.highlights == []
+    assert verify_digest_draft(
+        fallback_zero, [art_1, art_2], set(), ["AI agents"], max_highlights=0
+    ).passed
