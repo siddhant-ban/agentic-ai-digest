@@ -104,4 +104,4 @@ class Settings(BaseSettings):
         api_key = self.resolve_gemini_api_key(base_dir=base_dir)
         if api_key:
             os.environ["GOOGLE_API_KEY"] = api_key
-            os.environ["GEMINI_API_KEY"] = api_key
+            os.environ.pop("GEMINI_API_KEY", None)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -12,6 +13,7 @@ from google.adk.agents import LlmAgent
 from google.adk.events import Event
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel, ValidationError
 
@@ -21,6 +23,17 @@ logger = logging.getLogger(__name__)
 
 CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.DOTALL | re.IGNORECASE)
 MAX_RESPONSE_SUMMARY_CHARS = 300
+TRANSIENT_HTTP_CODES = frozenset({429, 500, 502, 503, 504})
+MAX_TRANSIENT_RETRIES = 2
+
+
+def _is_transient_genai_error(exc: BaseException) -> bool:
+    if isinstance(exc, genai_errors.ServerError):
+        return True
+    if isinstance(exc, genai_errors.APIError):
+        code = getattr(exc, "code", None)
+        return code in TRANSIENT_HTTP_CODES
+    return False
 
 
 def _extract_event_text(event: Event) -> str:
@@ -65,7 +78,7 @@ def _summarize_tool_response(response: Any) -> str:
     return serialized
 
 
-async def run_adk_agent(
+async def _run_adk_agent_once(
     agent: LlmAgent,
     prompt: str,
     budget: RunBudgetTracker,
@@ -73,11 +86,6 @@ async def run_adk_agent(
     app_name: str = "agentic_emailer",
     user_id: str = "system",
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Execute a Google ADK LlmAgent through Runner + InMemorySessionService.
-
-    Returns (final_response_text, tool_call_trajectory) while accounting all LLM calls
-    and token usage against `budget`.
-    """
     budget.assert_can_call_llm()
 
     session_service = InMemorySessionService()
@@ -159,6 +167,44 @@ async def run_adk_agent(
         budget.consume_llm_call(input_tokens=0, output_tokens=0, model=model_name)
 
     return (final_text or last_non_empty_text), trajectory
+
+
+async def run_adk_agent(
+    agent: LlmAgent,
+    prompt: str,
+    budget: RunBudgetTracker,
+    *,
+    app_name: str = "agentic_emailer",
+    user_id: str = "system",
+) -> tuple[str, list[dict[str, Any]]]:
+    """Execute a Google ADK LlmAgent through Runner + InMemorySessionService.
+
+    Returns (final_response_text, tool_call_trajectory) while accounting all LLM calls
+    and token usage against `budget`, retrying transient 429/5xx API errors.
+    """
+    for attempt in range(MAX_TRANSIENT_RETRIES + 1):
+        try:
+            return await _run_adk_agent_once(
+                agent,
+                prompt,
+                budget,
+                app_name=app_name,
+                user_id=user_id,
+            )
+        except Exception as exc:
+            if not _is_transient_genai_error(exc) or attempt >= MAX_TRANSIENT_RETRIES:
+                raise
+            delay = 2.0 * (2**attempt)
+            logger.warning(
+                "Transient GenAI API error in %s (attempt %d/%d): %s; retrying in %.1fs",
+                agent.name,
+                attempt + 1,
+                MAX_TRANSIENT_RETRIES + 1,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    raise RuntimeError(f"Unreachable retry exhaustion for agent {agent.name}")
 
 
 def parse_structured_output[T: BaseModel](raw_text: str, schema: type[T]) -> T:

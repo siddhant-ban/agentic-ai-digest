@@ -81,7 +81,8 @@ class RawArticle(BaseModel):
         return (
             f"[Article ID: {self.article_id}]\n"
             f"Title: {self.title}\n"
-            f"Source: {self.source} (via {self.discovered_via})\n"
+            f"Source: {self.source}\n"
+            f"Discovery: {self.discovered_via}\n"
             f"Published: {date_str}\n"
             f"URL: {self.url}\n"
             f"Topic Hints: {hints}\n"
