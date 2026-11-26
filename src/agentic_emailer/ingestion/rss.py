@@ -7,6 +7,7 @@ import hashlib
 import html
 import logging
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -14,6 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import feedparser
 import httpx
 from dateutil import parser as date_parser
+from pydantic import ValidationError
 
 from agentic_emailer.ingestion.extractor import fetch_url_safely
 from agentic_emailer.models import RawArticle, RssFeedConfig
@@ -34,6 +36,26 @@ TRACKING_QUERY_KEYS = frozenset(
 MAX_RSS_BYTES = 5_242_880  # 5 MiB cap for RSS/Atom XML documents
 MAX_SNIPPET_CHARS = 800
 HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def is_valid_http_url(url: str) -> bool:
+    """Return True iff url is a well-formed HTTP(S) URL with a valid host and port."""
+    cleaned = url.strip()
+    if not cleaned or any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        return False
+    try:
+        parsed = urlparse(cleaned)
+        port = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    if parsed.scheme.lower() not in ("http", "https") or not hostname:
+        return False
+    if any(ch.isspace() for ch in hostname):
+        return False
+    if port is not None and not (1 <= port <= 65535):
+        return False
+    return True
 
 
 def normalize_url(url: str) -> str:
@@ -90,7 +112,7 @@ def parse_published_datetime(raw: Any) -> datetime | None:
         return None
 
 
-def _parse_entry_published(entry: dict[str, Any]) -> datetime | None:
+def _parse_entry_published(entry: Mapping[str, Any]) -> datetime | None:
     for key in ("published", "updated", "created"):
         parsed_dt = parse_published_datetime(entry.get(key))
         if parsed_dt is not None:
@@ -134,6 +156,62 @@ def clean_snippet(raw_snippet: str, max_chars: int = MAX_SNIPPET_CHARS) -> str:
     return compact[: max_chars - 3].rstrip() + "..."
 
 
+def _parse_feed_entries(
+    entries: list[Any],
+    feed_name: str,
+    lookback_hours: int,
+    max_per_feed: int,
+) -> list[RawArticle]:
+    articles: list[RawArticle] = []
+    if max_per_feed <= 0:
+        return articles
+
+    for entry in entries[: max_per_feed * 3]:
+        if not isinstance(entry, Mapping):
+            continue
+        raw_url = str(entry.get("link") or entry.get("id") or "").strip()
+        title = " ".join(html.unescape(str(entry.get("title") or "")).split())
+        if not raw_url or not title or not is_valid_http_url(raw_url):
+            continue
+
+        published_at = _parse_entry_published(entry)
+        if not within_lookback(published_at, lookback_hours):
+            continue
+
+        raw_summary = str(entry.get("summary") or entry.get("description") or "")
+        snippet = clean_snippet(raw_summary)
+
+        canonical_url = normalize_url(raw_url)
+        article_id = make_article_id(canonical_url)
+
+        try:
+            article = RawArticle(
+                article_id=article_id,
+                canonical_url=canonical_url,
+                url=raw_url,
+                title=title,
+                source=feed_name,
+                published_at=published_at,
+                snippet=snippet,
+                discovered_via="rss",
+                topic_hints=[],
+            )
+        except (ValidationError, ValueError) as exc:
+            logger.warning(
+                "Skipping invalid RSS entry from %s (%r): %s",
+                feed_name,
+                raw_url,
+                exc,
+            )
+            continue
+
+        articles.append(article)
+        if len(articles) >= max_per_feed:
+            break
+
+    return articles
+
+
 async def _fetch_single_feed(
     client: httpx.AsyncClient,
     feed: RssFeedConfig,
@@ -173,39 +251,12 @@ async def _fetch_single_feed(
             )
             return []
 
-        articles: list[RawArticle] = []
-        for entry in parsed.entries[: max_per_feed * 3]:
-            raw_url = str(entry.get("link") or entry.get("id") or "").strip()
-            title = str(entry.get("title") or "").strip()
-            if not raw_url or not title or not raw_url.lower().startswith(("http://", "https://")):
-                continue
-
-            published_at = _parse_entry_published(entry)
-            if not within_lookback(published_at, lookback_hours):
-                continue
-
-            raw_summary = str(entry.get("summary") or entry.get("description") or "")
-            snippet = clean_snippet(raw_summary)
-
-            canonical_url = normalize_url(raw_url)
-            article_id = make_article_id(canonical_url)
-
-            articles.append(
-                RawArticle(
-                    article_id=article_id,
-                    canonical_url=canonical_url,
-                    url=raw_url,
-                    title=html.unescape(title),
-                    source=feed.name,
-                    published_at=published_at,
-                    snippet=snippet,
-                    discovered_via="rss",
-                    topic_hints=[],
-                )
-            )
-            if len(articles) >= max_per_feed:
-                break
-
+        articles = _parse_feed_entries(
+            list(parsed.entries),
+            feed.name,
+            lookback_hours,
+            max_per_feed,
+        )
         logger.info("RSS feed %s yielded %d article(s)", feed.name, len(articles))
         return articles
 

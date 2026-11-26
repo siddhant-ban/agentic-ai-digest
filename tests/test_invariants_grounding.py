@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agentic_emailer.agents.verifier import verify_digest_draft
-from agentic_emailer.ingestion.rss import make_article_id, normalize_url
+from agentic_emailer.ingestion.rss import is_valid_http_url, make_article_id, normalize_url
 from agentic_emailer.models import Citation, DigestDraft, DigestHighlight, RawArticle
 
 
@@ -36,6 +36,12 @@ def test_url_normalization_strips_tracking_and_dedups_id() -> None:
     # Malformed ports / broken IPv6 must never raise unhandled ValueError
     assert normalize_url("https://example.com:99999/bad") == "https://example.com:99999/bad"
     assert normalize_url("http://[::1/bad") == "http://[::1/bad"
+    assert is_valid_http_url(canon_a)
+    assert not is_valid_http_url("https://example.com:99999/bad")
+    assert not is_valid_http_url("http://example.com:0/bad")
+    assert not is_valid_http_url("http://[::1/bad")
+    assert not is_valid_http_url("http://bad host/path")
+    assert not is_valid_http_url("http://example.com/a\nb")
 
 
 def test_verifier_rejects_hallucinated_url() -> None:
@@ -177,3 +183,13 @@ def test_verifier_accepts_valid_verbatim_citations() -> None:
     assert result.errors == []
     assert result.invalid_urls == []
     assert result.stale_urls == []
+
+    capped = verify_digest_draft(
+        draft,
+        [art_1, art_2],
+        seen_urls=set(),
+        topics=["AI agents", "LLM evaluation"],
+        max_highlights=1,
+    )
+    assert not capped.passed
+    assert any("max_highlights" in err for err in capped.errors)

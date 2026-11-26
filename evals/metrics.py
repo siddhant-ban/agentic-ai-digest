@@ -127,13 +127,20 @@ def compute_case_metrics(
     topics: list[str],
     *,
     available_topics: list[str] | None = None,
+    max_highlights: int | None = None,
     revisions: int = 0,
     latency_ms: float = 0.0,
     used_fallback: bool = False,
     judge: JudgeScorecard | None = None,
 ) -> CaseEvalResult:
     """Compute deterministic schema, grounding, dedup leakage, and topic coverage metrics."""
-    verification = verify_digest_draft(draft, allowed_articles, seen_urls, topics)
+    verification = verify_digest_draft(
+        draft,
+        allowed_articles,
+        seen_urls,
+        topics,
+        max_highlights=max_highlights,
+    )
 
     allowed_raw = {a.url.strip() for a in allowed_articles}
     allowed_canon = {a.canonical_url.strip() for a in allowed_articles} | {

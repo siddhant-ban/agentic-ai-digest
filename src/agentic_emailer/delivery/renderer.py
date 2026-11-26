@@ -5,8 +5,8 @@ from __future__ import annotations
 import html
 from collections import defaultdict
 from datetime import UTC, datetime
-from urllib.parse import urlparse
 
+from agentic_emailer.ingestion.rss import is_valid_http_url
 from agentic_emailer.models import (
     Citation,
     DigestDraft,
@@ -22,12 +22,7 @@ def _sanitize_header_value(value: str) -> str:
 
 def _safe_href(url: str) -> str | None:
     cleaned = url.strip()
-    try:
-        parsed = urlparse(cleaned)
-        _ = parsed.port
-    except ValueError:
-        return None
-    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+    if not is_valid_http_url(cleaned):
         return None
     return html.escape(cleaned, quote=True)
 
@@ -241,9 +236,10 @@ def build_fallback_draft(
     max_highlights: int = 8,
 ) -> DigestDraft:
     """Build a guaranteed-grounded deterministic fallback digest without any LLM calls."""
-    if topics:
-        joined = " & ".join(topics[:3])
-        suffix = " & More" if len(topics) > 3 else ""
+    clean_topics = [t.strip() for t in topics if t and t.strip()]
+    if clean_topics:
+        joined = " & ".join(clean_topics[:3])
+        suffix = " & More" if len(clean_topics) > 3 else ""
         title = f"{joined}{suffix} Digest"
     else:
         title = "Daily News Digest"
@@ -259,16 +255,21 @@ def build_fallback_draft(
             notable_trends=[],
         )
 
-    default_topic = topics[0] if topics else "General"
+    default_topic = clean_topics[0] if clean_topics else "General"
     highlights: list[DigestHighlight] = []
     seen_canonical: set[str] = set()
 
     for article in articles:
+        if len(highlights) >= max_highlights:
+            break
         if article.canonical_url in seen_canonical:
             continue
         seen_canonical.add(article.canonical_url)
 
-        topic = article.topic_hints[0] if article.topic_hints else default_topic
+        topic = next(
+            (hint.strip() for hint in article.topic_hints if hint and hint.strip()),
+            default_topic,
+        )
         summary = article.snippet.strip() or f"Published by {article.source}."
         why = f"Direct update from {article.source} covering {topic}."
         highlights.append(
@@ -287,8 +288,6 @@ def build_fallback_draft(
                 ],
             )
         )
-        if len(highlights) >= max_highlights:
-            break
 
     return DigestDraft(
         title=f"{title} (Direct Source Briefing)",

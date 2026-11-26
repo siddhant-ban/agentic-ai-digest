@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
-
-from agentic_emailer.ingestion.rss import normalize_url
+from agentic_emailer.ingestion.rss import is_valid_http_url, normalize_url
 from agentic_emailer.models import (
     Citation,
     DigestDraft,
@@ -14,16 +12,7 @@ from agentic_emailer.models import (
 )
 
 MIN_EXECUTIVE_SUMMARY_CHARS = 30
-
-
-def _is_valid_http_url(url: str) -> bool:
-    """Return True iff url is a well-formed HTTP(S) URL with a valid port and host."""
-    try:
-        parsed = urlparse(url.strip())
-        _ = parsed.port
-    except ValueError:
-        return False
-    return parsed.scheme.lower() in ("http", "https") and bool(parsed.hostname)
+_is_valid_http_url = is_valid_http_url
 
 
 def _build_allowed_lookups(

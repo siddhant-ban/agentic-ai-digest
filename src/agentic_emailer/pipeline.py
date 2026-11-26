@@ -174,10 +174,18 @@ def discover_recipient_profiles(
 
     # 2. Local recipients.json file next to config_path (or CWD)
     if not source_loaded:
-        candidates: list[Path] = []
+        raw_candidates: list[Path] = []
         if config_path is not None:
-            candidates.append(config_path.resolve().parent / "recipients.json")
-        candidates.append(Path.cwd() / "recipients.json")
+            raw_candidates.append(config_path.resolve().parent / "recipients.json")
+        raw_candidates.append(Path.cwd() / "recipients.json")
+
+        candidates: list[Path] = []
+        seen_paths: set[Path] = set()
+        for candidate in raw_candidates:
+            resolved = candidate.resolve()
+            if resolved not in seen_paths:
+                seen_paths.add(resolved)
+                candidates.append(resolved)
 
         for recipients_file in candidates:
             if recipients_file.exists() and recipients_file.is_file():
@@ -232,7 +240,10 @@ def build_singleton_clusters(articles: list[RawArticle]) -> list[StoryCluster]:
         if article.canonical_url in seen_canonical:
             continue
         seen_canonical.add(article.canonical_url)
-        topic = article.topic_hints[0] if article.topic_hints else "General"
+        topic = next(
+            (hint.strip() for hint in article.topic_hints if hint and hint.strip()),
+            "General",
+        )
         clusters.append(
             StoryCluster(
                 cluster_id=f"cluster-{article.article_id}",
@@ -413,7 +424,13 @@ async def run_editorial_loop(
         empty_draft = build_fallback_draft(
             [], profile.topics, max_highlights=profile.max_highlights
         )
-        verification = verify_digest_draft(empty_draft, [], seen_urls, profile.topics)
+        verification = verify_digest_draft(
+            empty_draft,
+            [],
+            seen_urls,
+            profile.topics,
+            max_highlights=profile.max_highlights,
+        )
         return EditorialResult(
             draft=empty_draft,
             revisions=0,
