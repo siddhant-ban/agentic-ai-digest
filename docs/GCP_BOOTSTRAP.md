@@ -19,12 +19,13 @@ Install and verify these CLIs locally:
 1. Open the [Google Cloud Console](https://console.cloud.google.com/) and create (or select) a dedicated project (e.g., `agentic-emailer-prod`).
 2. Claim and link your **$10/month Google AI Pro / Google Developer Program** billing credits to your billing account, then attach that billing account to your project (**Billing → Link a billing account**).
 3. Note your **Project ID** and **Billing Account ID** (format `XXXXXX-XXXXXX-XXXXXX` under **Billing → Account management**).
-4. Authenticate `gcloud` and set your active project:
+4. Authenticate `gcloud`, set your active project, and attach it as the Application Default Credentials (ADC) quota project (required by Terraform Billing Budgets and local Firestore CLI commands):
 
 ```powershell
 gcloud auth login
-gcloud auth application-default login
 gcloud config set project YOUR_GCP_PROJECT_ID
+gcloud auth application-default login
+gcloud auth application-default set-quota-project YOUR_GCP_PROJECT_ID
 ```
 
 ---
