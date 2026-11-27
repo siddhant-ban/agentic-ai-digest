@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from agentic_emailer.config import Settings
+from agentic_emailer.memory.clustering import cluster_and_link_stories
+from agentic_emailer.memory.embeddings import (
+    EMBEDDING_DIMENSIONS,
+    build_article_embedding_text,
+    embed_texts,
+)
 from agentic_emailer.memory.local_json import LocalJsonMemoryStore
 from agentic_emailer.memory.protocol import (
     MemoryStore,
@@ -27,10 +33,14 @@ def create_memory_store(settings: Settings) -> MemoryStore:
 
 
 __all__ = [
+    "EMBEDDING_DIMENSIONS",
     "LocalJsonMemoryStore",
     "MemoryStore",
     "PriorClusterRecord",
+    "build_article_embedding_text",
+    "cluster_and_link_stories",
     "create_memory_store",
     "derive_cluster_summary",
+    "embed_texts",
     "ensure_utc",
 ]
