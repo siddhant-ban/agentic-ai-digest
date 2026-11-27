@@ -1,0 +1,38 @@
+# Version control & editor metadata
+.git
+.gitignore
+.github
+.cursor
+
+# Local virtualenvs, caches & test artifacts
+.venv
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+.coverage.*
+
+# Local runtime state & secrets (NEVER bake secrets into images)
+.env
+.env.*
+.local_memory
+*.txt
+recipients.json
+recipients.example.json
+config.json
+config.example.json
+config.ci.json
+
+# Non-runtime directories
+tests
+evals
+infra
+docs
+run_digest.ps1
+
+# Docker metadata
+Dockerfile
+.dockerignore
