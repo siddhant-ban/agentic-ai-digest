@@ -46,7 +46,7 @@ Edit `infra/terraform/terraform.tfvars`:
 
 ---
 
-## Step 3: Provision GCP Infrastructure (`terraform apply`)
+## Step 3: Bootstrap Registry & Secret Shell, Push Initial Image, and Add SMTP Secret
 
 Initialize Terraform and review the plan:
 
@@ -55,13 +55,19 @@ terraform -chdir=infra/terraform init
 terraform -chdir=infra/terraform plan
 ```
 
-> **Note on First-Time Bootstrap Image:** Cloud Run Jobs validates that the container image exists in Artifact Registry when creating `agentic-digest-job`. On a brand-new project, create the Artifact Registry repo first, push the initial image, and then apply the full stack:
+> **Why a two-step first apply?** When creating `agentic-digest-job`, Cloud Run Jobs validates that **both** the initial container image in Artifact Registry **and** a `latest` version of the `agentic-emailer-smtp-password` secret already exist. On a brand-new project, create the Artifact Registry repo and Secret Manager shell first, populate them out-of-band (so plaintext credentials never enter Terraform state), and then apply the full stack.
+
+### 3a. Enable APIs and Create Artifact Registry + Secret Manager Shell
 
 ```powershell
-# 3a. Enable APIs and create Artifact Registry first
-terraform -chdir=infra/terraform apply -target=google_artifact_registry_repository.docker
+terraform -chdir=infra/terraform apply `
+  -target=google_artifact_registry_repository.docker `
+  -target=google_secret_manager_secret.smtp_password
+```
 
-# 3b. Push the initial container image (choose ONE option):
+### 3b. Push the Initial Container Image (Choose ONE Option)
+
+```powershell
 # Option A (no local Docker required — uses Cloud Build's 120 free build-min/day):
 gcloud services enable cloudbuild.googleapis.com
 gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/agentic-emailer/agentic-emailer:latest .
@@ -70,29 +76,26 @@ gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/agenti
 # gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 # docker build -t us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/agentic-emailer/agentic-emailer:latest .
 # docker push us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/agentic-emailer/agentic-emailer:latest
-
-# 3c. Apply the complete Terraform stack (IAM, WIF, Firestore, Secret Manager, Cloud Run Job, Scheduler, Budget)
-terraform -chdir=infra/terraform apply
 ```
 
-Capture the Terraform outputs for Step 6:
+### 3c. Add the SMTP Password Secret Version (Out-of-Band)
 
-```powershell
-terraform -chdir=infra/terraform output
-```
+Add your Gmail App Password directly to Secret Manager so plaintext credentials never touch Terraform state:
 
----
-
-## Step 4: Add the SMTP Password Secret Version
-
-Terraform intentionally creates only the Secret Manager **shell** (`agentic-emailer-smtp-password`) so plaintext credentials never enter Terraform state. Add your Gmail App Password out-of-band:
-
-**PowerShell:**
+**PowerShell (writes exact UTF-8 bytes without trailing CRLF):**
 ```powershell
 $pw = Read-Host "Enter Gmail App Password" -AsSecureString
-$plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw))
-$plain | gcloud secrets versions add agentic-emailer-smtp-password --data-file=-
-$plain = $null
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw)
+$tmp = [System.IO.Path]::GetTempFileName()
+try {
+    $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    [System.IO.File]::WriteAllText($tmp, $plain)
+    gcloud secrets versions add agentic-emailer-smtp-password --data-file=$tmp
+} finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    $plain = $null
+}
 ```
 
 **macOS / Linux (bash):**
@@ -101,6 +104,22 @@ printf '%s' "YOUR_GMAIL_APP_PASSWORD" | gcloud secrets versions add agentic-emai
 ```
 
 > **Always Free Guardrail (<= 6 Active Secret Versions):** When rotating your SMTP password in the future, destroy old versions (`gcloud secrets versions destroy <VERSION> --secret=agentic-emailer-smtp-password`) so total active versions remain `<= 6`.
+
+---
+
+## Step 4: Provision the Complete GCP Stack (`terraform apply`)
+
+Now apply the full Terraform stack (IAM, WIF, Firestore, Cloud Run Job, Cloud Scheduler, and Billing Budget alerts):
+
+```powershell
+terraform -chdir=infra/terraform apply
+```
+
+Capture the Terraform outputs for Step 6:
+
+```powershell
+terraform -chdir=infra/terraform output
+```
 
 ---
 

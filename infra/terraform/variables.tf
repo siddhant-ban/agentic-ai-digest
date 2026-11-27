@@ -82,7 +82,7 @@ variable "monthly_budget_usd" {
   default     = 10
 
   validation {
-    condition     = var.monthly_budget_usd >= 1
-    error_message = "monthly_budget_usd must be at least 1 USD."
+    condition     = var.monthly_budget_usd >= 1 && floor(var.monthly_budget_usd) == var.monthly_budget_usd
+    error_message = "monthly_budget_usd must be a whole number of at least 1 USD."
   }
 }

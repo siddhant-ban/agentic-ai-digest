@@ -27,7 +27,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1
 
 RUN groupadd --gid 10001 appuser \
-    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin appuser
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app \
+    && chown appuser:appuser /app
 
 WORKDIR /app
 
