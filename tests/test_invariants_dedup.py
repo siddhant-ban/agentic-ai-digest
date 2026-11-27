@@ -309,9 +309,23 @@ def test_local_json_memory_store_roundtrip_and_pruning(tmp_path: Path) -> None:
 
         now = datetime.now(UTC)
         await store.save_run_metrics(
-            RunMetrics(run_id="run-001", started_at=now, finished_at=now, clusters_formed=1)
+            RunMetrics(
+                run_id="run-001",
+                started_at=now - timedelta(hours=1),
+                finished_at=now - timedelta(hours=1),
+                clusters_formed=1,
+                trace_id="0123456789abcdef0123456789abcdef",
+            )
+        )
+        await store.save_run_metrics(
+            RunMetrics(run_id="run-002", started_at=now, finished_at=now, clusters_formed=2)
         )
         assert "run-001" in json.loads(store.runs_path.read_text(encoding="utf-8"))
+        recent_runs = await store.list_recent_runs(limit=1)
+        assert [r.run_id for r in recent_runs] == ["run-002"]
+        all_runs = await store.list_recent_runs(limit=5)
+        assert [r.run_id for r in all_runs] == ["run-002", "run-001"]
+        assert all_runs[1].trace_id == "0123456789abcdef0123456789abcdef"
 
         # Inject expired (>30 days old) seen article and cluster directly to verify window + pruning
         expired_iso = (now - timedelta(days=45)).isoformat()

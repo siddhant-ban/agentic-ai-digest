@@ -318,6 +318,40 @@ class FirestoreMemoryStore:
             metrics.model_dump(mode="python")
         )
 
+    async def list_recent_runs(self, limit: int = 10) -> list[RunMetrics]:
+        """Fetch up to `limit` most recent RunMetrics using a single-field descending sort."""
+        if limit <= 0:
+            return []
+        client = self._get_client()
+        query = (
+            client.collection(COLLECTION_RUNS)
+            .order_by("started_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+
+        runs: list[RunMetrics] = []
+        stream = query.stream()
+        try:
+            async for snap in stream:
+                data = snap.to_dict() or {}
+                if not data.get("run_id"):
+                    data["run_id"] = snap.id
+                started = _parse_firestore_timestamp(data.get("started_at"))
+                finished = _parse_firestore_timestamp(data.get("finished_at"))
+                if started is not None:
+                    data["started_at"] = started
+                if finished is not None:
+                    data["finished_at"] = finished
+                try:
+                    runs.append(RunMetrics.model_validate(data))
+                except Exception as exc:
+                    logger.warning("Skipping invalid Firestore run doc %r: %s", snap.id, exc)
+        finally:
+            await _close_async_stream(stream)
+
+        runs.sort(key=lambda r: (-ensure_utc(r.started_at).timestamp(), r.run_id))
+        return runs[:limit]
+
     async def _prune_collection(
         self,
         collection_name: str,
