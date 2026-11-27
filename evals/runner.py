@@ -24,7 +24,11 @@ from agentic_emailer.memory import (
     embed_texts,
 )
 from agentic_emailer.models import RawArticle, RecipientProfile
-from agentic_emailer.pipeline import run_editorial_loop, safe_print
+from agentic_emailer.pipeline import (
+    build_singleton_clusters,
+    run_editorial_loop,
+    safe_print,
+)
 from evals.judges import evaluate_digest_with_judge
 from evals.metrics import (
     CaseEvalResult,
@@ -184,9 +188,17 @@ def _format_scorecard_markdown(
     lines = [
         f"## Agentic Emailer Eval Scorecard (`mode={report.mode}`)",
         "",
-        "| Metric | Current | Baseline | Delta | Target / Gate |",
-        "|---|---:|---:|---:|---|",
     ]
+    if report.model_config_snapshot:
+        cfg_parts = [f"`{k}={v}`" for k, v in report.model_config_snapshot.items()]
+        lines.append("**Config:** " + " · ".join(cfg_parts))
+        lines.append("")
+    lines.extend(
+        [
+            "| Metric | Current | Baseline | Delta | Target / Gate |",
+            "|---|---:|---:|---:|---|",
+        ]
+    )
     for name, curr, prev, dec, gate in rows:
         lines.append(
             f"| `{name}` | {_fmt(curr, dec)} | {_fmt(prev, dec)} | "
@@ -365,6 +377,9 @@ async def run_full_eval(
     settings: Settings,
     *,
     judge_model: str | None = None,
+    enable_critic: bool = True,
+    enable_clustering: bool = True,
+    skip_trajectories: bool = False,
 ) -> EvalReport:
     """Execute live ADK Synthesis/Verifier/Critic + ResearchAgent trajectories + LLM-as-judge."""
     settings.apply_genai_env(base_dir=EVALS_DIR.parent)
@@ -372,12 +387,25 @@ async def run_full_eval(
     corpus_data = _load_json(corpus_path)
     trajectory_data = _load_json(trajectory_path)
 
-    budget = RunBudgetTracker(
+    pipeline_budget = RunBudgetTracker(
         max_llm_calls=settings.max_llm_calls_per_run,
         max_total_tokens=settings.max_total_tokens_per_run,
         max_scrapes=settings.max_article_scrapes_per_run,
         max_searches=settings.max_search_calls_per_run,
     )
+    judge_budget = RunBudgetTracker(
+        max_llm_calls=max(20, len(corpus_data["cases"]) * 4),
+        max_total_tokens=settings.max_total_tokens_per_run,
+    )
+
+    if enable_critic and enable_clustering:
+        architecture_mode = "full_agentic"
+    elif not enable_critic and not enable_clustering:
+        architecture_mode = "single_shot"
+    elif not enable_critic:
+        architecture_mode = "no_critic"
+    else:
+        architecture_mode = "no_clustering"
 
     case_results: list[CaseEvalResult] = []
     for raw_case in corpus_data["cases"]:
@@ -393,7 +421,6 @@ async def run_full_eval(
         available_topics = list(raw_case.get("available_topics") or profile.topics)
         _validate_case_expectations(case_id, articles, expected_dev_ids, suppressed_urls)
 
-        # Embed unseen articles + any prior clusters without precomputed vectors in one batch call
         normalized_seen = normalize_seen_urls(seen_urls)
         unseen_indices = [
             idx
@@ -402,45 +429,56 @@ async def run_full_eval(
             and normalize_url(art.url) not in normalized_seen
             and art.url not in normalized_seen
         ]
-        priors_needing_emb = [
-            idx for idx, pc in enumerate(prior_clusters) if not pc.embedding
-        ]
-        texts_to_embed = [
-            build_article_embedding_text(articles[idx]) for idx in unseen_indices
-        ] + [
-            _prior_cluster_embedding_text(prior_clusters[idx]) for idx in priors_needing_emb
-        ]
 
         t0 = time.perf_counter()
-        batch_vectors = (
-            await embed_texts(texts_to_embed, settings, budget) if texts_to_embed else []
-        )
-
-        article_embeddings: list[list[float]] = [[] for _ in articles]
-        for pos, art_idx in enumerate(unseen_indices):
-            article_embeddings[art_idx] = batch_vectors[pos]
-
-        hydrated_priors = list(prior_clusters)
-        offset = len(unseen_indices)
-        for pos, prior_idx in enumerate(priors_needing_emb):
-            hydrated_priors[prior_idx] = hydrated_priors[prior_idx].model_copy(
-                update={"embedding": batch_vectors[offset + pos]}
+        if enable_clustering:
+            # Embed unseen articles + any prior clusters without precomputed vectors in one batch
+            priors_needing_emb = [
+                idx for idx, pc in enumerate(prior_clusters) if not pc.embedding
+            ]
+            texts_to_embed = [
+                build_article_embedding_text(articles[idx]) for idx in unseen_indices
+            ] + [
+                _prior_cluster_embedding_text(prior_clusters[idx]) for idx in priors_needing_emb
+            ]
+            batch_vectors = (
+                await embed_texts(texts_to_embed, settings, pipeline_budget)
+                if texts_to_embed
+                else []
             )
 
-        clusters, cross_day_deduped = cluster_and_link_stories(
-            articles,
-            article_embeddings,
-            seen_urls,
-            hydrated_priors,
-            merge_threshold=settings.cluster_merge_threshold,
-            storyline_threshold=settings.storyline_link_threshold,
-            semantic_dedup_threshold=settings.semantic_dedup_threshold,
-        )
+            article_embeddings: list[list[float]] = [[] for _ in articles]
+            for pos, art_idx in enumerate(unseen_indices):
+                article_embeddings[art_idx] = batch_vectors[pos]
+
+            hydrated_priors = list(prior_clusters)
+            offset = len(unseen_indices)
+            for pos, prior_idx in enumerate(priors_needing_emb):
+                hydrated_priors[prior_idx] = hydrated_priors[prior_idx].model_copy(
+                    update={"embedding": batch_vectors[offset + pos]}
+                )
+
+            clusters, cross_day_deduped = cluster_and_link_stories(
+                articles,
+                article_embeddings,
+                seen_urls,
+                hydrated_priors,
+                merge_threshold=settings.cluster_merge_threshold,
+                storyline_threshold=settings.storyline_link_threshold,
+                semantic_dedup_threshold=settings.semantic_dedup_threshold,
+            )
+        else:
+            unseen_articles = [articles[idx] for idx in unseen_indices]
+            clusters = build_singleton_clusters(unseen_articles)
+            cross_day_deduped = len(articles) - len(unseen_articles)
+
         developing_linked = sum(1 for c in clusters if c.is_developing_story)
 
         logger.info(
-            "Running full eval case: %s (%d articles -> %d clusters, %d deduped, %d developing)",
+            "Running full eval case: %s [arch=%s] (%d articles -> %d clusters, %d deduped, "
+            "%d developing)",
             case_id,
+            architecture_mode,
             len(articles),
             len(clusters),
             cross_day_deduped,
@@ -451,7 +489,8 @@ async def run_full_eval(
             clusters,
             seen_urls,
             settings,
-            budget,
+            pipeline_budget,
+            enable_critic=enable_critic,
         )
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -461,7 +500,7 @@ async def run_full_eval(
             profile.topics,
             seen_urls | suppressed_urls,
             model=resolved_judge_model,
-            budget=budget,
+            budget=judge_budget,
             clusters=clusters,
         )
 
@@ -492,75 +531,80 @@ async def run_full_eval(
         )
 
     trajectory_results: list[TrajectoryEvalResult] = []
-    for raw_traj in trajectory_data["cases"]:
-        case_id = str(raw_traj["case_id"])
-        topics = list(raw_traj["topics"])
-        articles = [_hydrate_article(a) for a in raw_traj["articles"]]
-        fixture_texts: dict[str, str] = dict(raw_traj.get("fixture_full_texts") or {})
-        fixture_search_articles = [
-            _hydrate_article(a) for a in raw_traj.get("fixture_search_results") or []
-        ]
+    if not skip_trajectories:
+        for raw_traj in trajectory_data["cases"]:
+            case_id = str(raw_traj["case_id"])
+            topics = list(raw_traj["topics"])
+            articles = [_hydrate_article(a) for a in raw_traj["articles"]]
+            fixture_texts: dict[str, str] = dict(raw_traj.get("fixture_full_texts") or {})
+            fixture_search_articles = [
+                _hydrate_article(a) for a in raw_traj.get("fixture_search_results") or []
+            ]
 
-        async def _fixture_extract(
-            url: str,
-            max_chars: int,
-            *,
-            texts: dict[str, str] = fixture_texts,
-        ) -> str | None:
-            body = texts.get(url) or texts.get(normalize_url(url))
-            return body[:max_chars] if body else None
+            async def _fixture_extract(
+                url: str,
+                max_chars: int,
+                *,
+                texts: dict[str, str] = fixture_texts,
+            ) -> str | None:
+                body = texts.get(url) or texts.get(normalize_url(url))
+                return body[:max_chars] if body else None
 
-        def _fixture_search(
-            query: str,
-            lookback_hours: int,
-            max_results: int,
-            topic: str | None,
-            *,
-            results: list[RawArticle] = fixture_search_articles,
-        ) -> list[RawArticle]:
-            del query, lookback_hours, topic
-            return results[:max_results]
+            def _fixture_search(
+                query: str,
+                lookback_hours: int,
+                max_results: int,
+                topic: str | None,
+                *,
+                results: list[RawArticle] = fixture_search_articles,
+            ) -> list[RawArticle]:
+                del query, lookback_hours, topic
+                return results[:max_results]
 
-        logger.info("Running ResearchAgent trajectory eval case: %s", case_id)
-        t0 = time.perf_counter()
-        _, trajectory = await run_research_stage(
-            articles,
-            topics,
-            lookback_hours=36,
-            settings=settings,
-            budget=budget,
-            search_fn=_fixture_search,
-            extract_fn=_fixture_extract,
-        )
-        traj_ms = (time.perf_counter() - t0) * 1000.0
-
-        trajectory_results.append(
-            evaluate_trajectory_case(
-                case_id,
-                trajectory,
-                expected_scrape_ids=list(raw_traj.get("expected_scrape_ids") or []),
-                forbidden_scrape_ids=list(raw_traj.get("forbidden_scrape_ids") or []),
-                max_searches=int(raw_traj.get("max_searches", 0)),
-                max_scrapes=raw_traj.get("max_scrapes"),
-                latency_ms=traj_ms,
+            logger.info("Running ResearchAgent trajectory eval case: %s", case_id)
+            t0 = time.perf_counter()
+            _, trajectory = await run_research_stage(
+                articles,
+                topics,
+                lookback_hours=36,
+                settings=settings,
+                budget=pipeline_budget,
+                search_fn=_fixture_search,
+                extract_fn=_fixture_extract,
             )
-        )
+            traj_ms = (time.perf_counter() - t0) * 1000.0
+
+            trajectory_results.append(
+                evaluate_trajectory_case(
+                    case_id,
+                    trajectory,
+                    expected_scrape_ids=list(raw_traj.get("expected_scrape_ids") or []),
+                    forbidden_scrape_ids=list(raw_traj.get("forbidden_scrape_ids") or []),
+                    max_searches=int(raw_traj.get("max_searches", 0)),
+                    max_scrapes=raw_traj.get("max_scrapes"),
+                    latency_ms=traj_ms,
+                )
+            )
 
     summary = aggregate_metrics(
         case_results,
         trajectory_results,
-        estimated_cost_usd=budget.estimated_cost_usd(settings.synthesis_model),
+        estimated_cost_usd=pipeline_budget.estimated_cost_usd(settings.synthesis_model),
     )
     failures = _check_hard_gates(summary, mode="full")
 
     return EvalReport(
         mode="full",
         model_config_snapshot={
+            "architecture_mode": architecture_mode,
             "research_model": settings.research_model,
             "synthesis_model": settings.synthesis_model,
-            "critic_model": settings.critic_model,
+            "critic_model": settings.critic_model if enable_critic else "disabled",
             "judge_model": resolved_judge_model,
-            "embedding_model": settings.embedding_model,
+            "embedding_model": settings.embedding_model if enable_clustering else "disabled",
+            "pipeline_llm_calls": str(pipeline_budget.llm_calls),
+            "pipeline_tokens": str(pipeline_budget.total_tokens),
+            "judge_cost_usd": f"{judge_budget.estimated_cost_usd(resolved_judge_model):.6f}",
         },
         timestamp_utc=datetime.now(UTC).isoformat(),
         summary=summary,
@@ -607,6 +651,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to write full eval JSON report.",
     )
     parser.add_argument(
+        "--markdown-summary",
+        type=Path,
+        default=None,
+        help="Optional path to write the rendered Markdown scorecard summary.",
+    )
+    parser.add_argument(
+        "--synthesis-model",
+        type=str,
+        default=None,
+        help="Optional Gemini model override for SynthesisAgent (default: SYNTHESIS_MODEL).",
+    )
+    parser.add_argument(
+        "--research-model",
+        type=str,
+        default=None,
+        help="Optional Gemini model override for ResearchAgent (default: RESEARCH_MODEL).",
+    )
+    parser.add_argument(
+        "--critic-model",
+        type=str,
+        default=None,
+        help="Optional Gemini model override for CriticAgent (default: CRITIC_MODEL).",
+    )
+    parser.add_argument(
         "--judge-model",
         type=str,
         default=None,
@@ -614,6 +682,26 @@ def build_parser() -> argparse.ArgumentParser:
             "Optional Gemini model override for LLM-as-judge "
             "(default: EVAL_JUDGE_MODEL or critic_model)."
         ),
+    )
+    parser.add_argument(
+        "--no-critic",
+        action="store_true",
+        help="Disable CriticAgent and revision loop (single-pass synthesis + deterministic check).",
+    )
+    parser.add_argument(
+        "--no-clustering",
+        action="store_true",
+        help="Disable embeddings, semantic clustering, and cross-day storyline linking.",
+    )
+    parser.add_argument(
+        "--single-shot",
+        action="store_true",
+        help="Baseline mode equivalent to --no-critic --no-clustering.",
+    )
+    parser.add_argument(
+        "--skip-trajectories",
+        action="store_true",
+        help="Skip ResearchAgent trajectory cases during full eval.",
     )
     parser.add_argument(
         "--save-baseline",
@@ -637,16 +725,37 @@ def _run_cli(args: argparse.Namespace) -> int:
         report = run_deterministic_eval(args.corpus, args.trajectories, baseline_report)
     else:
         settings = Settings()
+        updates: dict[str, Any] = {}
+        if args.synthesis_model:
+            updates["synthesis_model"] = args.synthesis_model.strip()
+        if args.research_model:
+            updates["research_model"] = args.research_model.strip()
+        if args.critic_model:
+            updates["critic_model"] = args.critic_model.strip()
+        if updates:
+            settings = settings.model_copy(update=updates)
+
+        enable_critic = not (args.no_critic or args.single_shot)
+        enable_clustering = not (args.no_clustering or args.single_shot)
         report = asyncio.run(
             run_full_eval(
                 args.corpus,
                 args.trajectories,
                 settings,
                 judge_model=args.judge_model,
+                enable_critic=enable_critic,
+                enable_clustering=enable_clustering,
+                skip_trajectories=args.skip_trajectories,
             )
         )
 
-    safe_print(_format_scorecard_markdown(report, baseline_report))
+    scorecard_md = _format_scorecard_markdown(report, baseline_report)
+    safe_print(scorecard_md)
+
+    if args.markdown_summary is not None:
+        args.markdown_summary.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown_summary.write_text(scorecard_md + "\n", encoding="utf-8")
+        logger.info("Wrote Markdown scorecard summary to %s", args.markdown_summary)
 
     serialized = report.model_dump_json(indent=2) + "\n"
     if args.output is not None:

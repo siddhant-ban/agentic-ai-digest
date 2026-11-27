@@ -308,6 +308,22 @@ class LocalJsonMemoryStore:
             raw_map[metrics.run_id] = metrics.model_dump(mode="json")
             self._write_mapping(self.runs_path, raw_map)
 
+    async def list_recent_runs(self, limit: int = 10) -> list[RunMetrics]:
+        """Return up to `limit` most recent RunMetrics ordered newest-first."""
+        if limit <= 0:
+            return []
+        with self._lock:
+            raw_map = self._read_mapping(self.runs_path)
+
+        runs: list[RunMetrics] = []
+        for run_id, raw in raw_map.items():
+            try:
+                runs.append(RunMetrics.model_validate(raw))
+            except Exception as exc:
+                logger.warning("Skipping invalid stored run %r: %s", run_id, exc)
+        runs.sort(key=lambda r: (-ensure_utc(r.started_at).timestamp(), r.run_id))
+        return runs[:limit]
+
     async def prune_expired(self, retention_days: int = 30) -> int:
         """Delete seen_articles and story_clusters entries older than `retention_days`."""
         if retention_days < 0:

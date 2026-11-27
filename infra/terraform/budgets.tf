@@ -7,8 +7,12 @@ data "google_project" "current" {
 # Fires notifications at 20%, 50%, 80%, and 100% of actual spend plus 80% forecasted spend.
 resource "google_billing_budget" "monthly_guardrail" {
   count           = var.billing_account_id != "" ? 1 : 0
-  billing_account = var.billing_account_id
-  display_name    = format("Agentic Emailer Monthly Budget ($%s USD)", var.monthly_budget_usd)
+  billing_account = trimprefix(trimspace(var.billing_account_id), "billingAccounts/")
+  display_name = (
+    var.budget_currency_code != ""
+    ? format("Agentic Emailer Monthly Budget (%s %s)", var.monthly_budget_usd, var.budget_currency_code)
+    : format("Agentic Emailer Monthly Budget (%s)", var.monthly_budget_usd)
+  )
 
   budget_filter {
     projects = ["projects/${data.google_project.current[0].number}"]
@@ -16,7 +20,7 @@ resource "google_billing_budget" "monthly_guardrail" {
 
   amount {
     specified_amount {
-      currency_code = "USD"
+      currency_code = var.budget_currency_code != "" ? var.budget_currency_code : null
       units         = tostring(var.monthly_budget_usd)
     }
   }

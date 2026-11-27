@@ -1,0 +1,101 @@
+name: Full LLM-as-Judge Eval Suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      synthesis_model:
+        description: "Optional Gemini model override for SynthesisAgent (e.g. gemini-3.1-flash-lite, gemini-3-flash)"
+        required: false
+        default: ""
+        type: string
+      judge_model:
+        description: "Optional Gemini model override for LLM-as-judge"
+        required: false
+        default: ""
+        type: string
+      single_shot:
+        description: "Run single-shot baseline (--no-critic --no-clustering)"
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eval-full-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  eval-full:
+    name: Offline Golden Eval & LLM-as-Judge Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify GEMINI_API_KEY secret is configured
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "${GEMINI_API_KEY}" ]; then
+            echo "::error::Missing GEMINI_API_KEY repository secret. Configure it under Settings -> Secrets and variables -> Actions -> Secrets."
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: Run full LLM-as-judge evaluation
+        env:
+          GOOGLE_GENAI_USE_VERTEXAI: "false"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SYNTHESIS_MODEL_INPUT: ${{ inputs.synthesis_model }}
+          JUDGE_MODEL_INPUT: ${{ inputs.judge_model }}
+          SINGLE_SHOT_INPUT: ${{ inputs.single_shot }}
+        run: |
+          args=(
+            --mode full
+            --output eval-report.json
+            --markdown-summary eval-summary.md
+          )
+          if [ -n "${SYNTHESIS_MODEL_INPUT}" ]; then
+            args+=(--synthesis-model "${SYNTHESIS_MODEL_INPUT}")
+          fi
+          if [ -n "${JUDGE_MODEL_INPUT}" ]; then
+            args+=(--judge-model "${JUDGE_MODEL_INPUT}")
+          fi
+          if [ "${SINGLE_SHOT_INPUT}" = "true" ]; then
+            args+=(--single-shot)
+          fi
+          uv run agentic-emailer-eval "${args[@]}"
+
+      - name: Publish Markdown scorecard to GitHub Step Summary
+        if: always()
+        run: |
+          if [ -f eval-summary.md ]; then
+            cat eval-summary.md >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload eval scorecard and JSON report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-full-report-${{ github.run_id }}
+          path: |
+            eval-report.json
+            eval-summary.md
+          if-no-files-found: warn
+          retention-days: 30

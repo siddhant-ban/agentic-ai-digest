@@ -25,6 +25,23 @@ variable "region" {
   }
 }
 
+variable "use_vertex_ai" {
+  description = "When true, authenticate Gemini calls via Vertex AI IAM (requires an eligible paid Cloud Billing account). When false, mount GEMINI_API_KEY from Secret Manager."
+  type        = bool
+  default     = false
+}
+
+variable "vertex_ai_location" {
+  description = "Vertex AI endpoint location for Gemini and embedding models (Gemini 3.x publisher models are served on 'global')."
+  type        = string
+  default     = "global"
+
+  validation {
+    condition     = length(trimspace(var.vertex_ai_location)) > 0
+    error_message = "vertex_ai_location must be a non-empty Vertex AI location (e.g., 'global')."
+  }
+}
+
 variable "github_repo" {
   description = "GitHub repository in 'owner/repo' format allowed to deploy via keyless OIDC Workload Identity Federation."
   type        = string
@@ -77,12 +94,18 @@ variable "critic_model" {
 }
 
 variable "monthly_budget_usd" {
-  description = "Monthly GCP billing budget cap in USD for alert notifications (matches $10/mo Google AI Pro credits)."
+  description = "Monthly GCP billing budget cap in your billing account's currency for alert notifications (default: 10)."
   type        = number
   default     = 10
 
   validation {
     condition     = var.monthly_budget_usd >= 1 && floor(var.monthly_budget_usd) == var.monthly_budget_usd
-    error_message = "monthly_budget_usd must be a whole number of at least 1 USD."
+    error_message = "monthly_budget_usd must be a whole number of at least 1."
   }
+}
+
+variable "budget_currency_code" {
+  description = "Optional ISO 4217 currency code (e.g., USD, CAD, EUR). Leave empty to automatically match your GCP billing account currency."
+  type        = string
+  default     = ""
 }
