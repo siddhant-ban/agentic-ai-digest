@@ -82,6 +82,20 @@ def _prior_cluster_embedding_text(record: PriorClusterRecord) -> str:
     return f"{title}\n{summary}".strip() if summary else title
 
 
+def _validate_case_expectations(
+    case_id: str,
+    articles: list[RawArticle],
+    expected_dev_ids: list[str],
+) -> None:
+    article_ids = {a.article_id for a in articles}
+    unknown_dev = set(expected_dev_ids) - article_ids
+    if unknown_dev:
+        raise ValueError(
+            f"Golden case {case_id!r} references unknown developing article_ids: "
+            f"{sorted(unknown_dev)}"
+        )
+
+
 def _check_hard_gates(summary: EvalSummary, mode: str) -> list[str]:
     failures: list[str] = []
     if summary.schema_validity_rate < HARD_GATE_SCHEMA_VALIDITY:
@@ -237,15 +251,7 @@ def run_deterministic_eval(
         suppressed_urls = set(raw_case.get("expected_suppressed_urls") or [])
         expected_dev_ids = list(raw_case.get("expected_developing_article_ids") or [])
         available_topics = list(raw_case.get("available_topics") or profile.topics)
-
-        # Validate expected_developing_article_ids exist in case articles
-        article_ids = {a.article_id for a in articles}
-        unknown_dev = set(expected_dev_ids) - article_ids
-        if unknown_dev:
-            raise ValueError(
-                f"Golden case {case_id!r} references unknown developing article_ids: "
-                f"{sorted(unknown_dev)}"
-            )
+        _validate_case_expectations(case_id, articles, expected_dev_ids)
 
         normalized_disallowed = normalize_seen_urls(seen_urls | suppressed_urls)
         unseen_articles = [
@@ -375,6 +381,7 @@ async def run_full_eval(
         suppressed_urls = set(raw_case.get("expected_suppressed_urls") or [])
         expected_dev_ids = list(raw_case.get("expected_developing_article_ids") or [])
         available_topics = list(raw_case.get("available_topics") or profile.topics)
+        _validate_case_expectations(case_id, articles, expected_dev_ids)
 
         # Embed unseen articles + any prior clusters without precomputed vectors in one batch call
         normalized_seen = normalize_seen_urls(seen_urls)

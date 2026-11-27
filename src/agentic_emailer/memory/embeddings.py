@@ -87,6 +87,20 @@ def _extract_batch_tokens(response: Any, batch_texts: list[str]) -> int:
     return max(1, sum(len(text) for text in batch_texts) // 4)
 
 
+def _create_genai_client(settings: Settings) -> genai.Client:
+    """Construct a google-genai Client honoring Settings Vertex AI vs. Gemini API config."""
+    if settings.google_genai_use_vertexai:
+        return genai.Client(
+            vertexai=True,
+            project=settings.gcp_project_id,
+            location=settings.gcp_location,
+        )
+    api_key = settings.resolve_gemini_api_key()
+    if api_key:
+        return genai.Client(vertexai=False, api_key=api_key)
+    return genai.Client()
+
+
 async def embed_texts(
     texts: list[str],
     settings: Settings,
@@ -103,7 +117,7 @@ async def embed_texts(
     (<=0.72) from developing follow-ups (~0.82-0.90), same-day multi-outlet coverage (>=0.84),
     and cross-day near-duplicate re-hashes (>=0.94).
 
-    Respects `GOOGLE_GENAI_USE_VERTEXAI` automatically via `google.genai.Client()` and accounts
+    Respects `GOOGLE_GENAI_USE_VERTEXAI` automatically via `Settings` and accounts
     every batch API call and estimated/reported token count in `budget`.
     """
     if not texts:
@@ -130,7 +144,7 @@ async def embed_texts(
     )
 
     normalized_vectors: list[list[float]] = []
-    client = genai.Client()
+    client = _create_genai_client(settings)
     try:
         for start in range(0, len(sanitized), MAX_EMBED_BATCH_SIZE):
             batch = sanitized[start : start + MAX_EMBED_BATCH_SIZE]
@@ -180,7 +194,9 @@ async def embed_texts(
                 values = list(emb.values) if emb.values is not None else None
                 normalized_vectors.append(_l2_normalize_vector(values, output_dimensionality))
     finally:
-        await client.aio.aclose()
-        client.close()
+        try:
+            await client.aio.aclose()
+        finally:
+            client.close()
 
     return normalized_vectors

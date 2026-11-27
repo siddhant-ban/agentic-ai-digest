@@ -168,7 +168,7 @@ def cluster_and_link_stories(
             continue
 
         best_cluster: _WorkingCluster | None = None
-        best_sim = -1.0
+        best_sim = float("-inf")
         for cluster in working_clusters:
             if cluster.centroid is None or cluster.centroid.shape != unit_vec.shape:
                 continue

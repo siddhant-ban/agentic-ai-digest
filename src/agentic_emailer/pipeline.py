@@ -930,11 +930,28 @@ async def run_digest_pipeline(
 
         # Stage 4: Pre-filter exact seen URLs (avoid embedding already-sent URLs), then embed,
         # cluster same-day coverage, suppress cross-day re-hashes, and link developing stories.
+        # Sort preferring extracted full_text and newest timestamp before same-day URL dedup.
+        sorted_articles = sorted(
+            all_articles,
+            key=lambda a: (
+                0 if a.full_text else 1,
+                -(
+                    (
+                        a.published_at.replace(tzinfo=UTC)
+                        if a.published_at.tzinfo is None
+                        else a.published_at.astimezone(UTC)
+                    ).timestamp()
+                    if a.published_at is not None
+                    else float("-inf")
+                ),
+                a.article_id,
+            ),
+        )
         unseen_candidates: list[RawArticle] = []
         seen_today_canonical: set[str] = set()
         exact_seen_deduped = 0
 
-        for article in all_articles:
+        for article in sorted_articles:
             canon = normalize_url(article.canonical_url or article.url)
             raw_norm = normalize_url(article.url)
             if (

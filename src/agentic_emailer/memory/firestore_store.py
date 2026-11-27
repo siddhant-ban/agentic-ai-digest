@@ -64,6 +64,12 @@ def _parse_firestore_timestamp(value: Any) -> datetime | None:
     return None
 
 
+async def _close_async_stream(stream: Any) -> None:
+    aclose = getattr(stream, "aclose", None)
+    if callable(aclose):
+        await aclose()
+
+
 class FirestoreMemoryStore:
     """Async Cloud Firestore MemoryStore engineered for GCP Always Free tier quotas.
 
@@ -105,17 +111,23 @@ class FirestoreMemoryStore:
         )
 
         profiles: list[RecipientProfile] = []
-        async for snap in query.stream():
-            data = snap.to_dict() or {}
-            if not data.get("id"):
-                data["id"] = snap.id
-            try:
-                profile = RecipientProfile.model_validate(data)
-            except Exception as exc:
-                logger.warning("Skipping invalid Firestore recipient doc %r: %s", snap.id, exc)
-                continue
-            if profile.enabled:
-                profiles.append(profile)
+        stream = query.stream()
+        try:
+            async for snap in stream:
+                data = snap.to_dict() or {}
+                if not data.get("id"):
+                    data["id"] = snap.id
+                try:
+                    profile = RecipientProfile.model_validate(data)
+                except Exception as exc:
+                    logger.warning(
+                        "Skipping invalid Firestore recipient doc %r: %s", snap.id, exc
+                    )
+                    continue
+                if profile.enabled:
+                    profiles.append(profile)
+        finally:
+            await _close_async_stream(stream)
 
         profiles.sort(key=lambda p: p.id)
         return profiles
@@ -154,11 +166,15 @@ class FirestoreMemoryStore:
         )
 
         urls: set[str] = set()
-        async for snap in query.stream():
-            data = snap.to_dict() or {}
-            canonical = str(data.get("canonical_url") or "").strip()
-            if canonical:
-                urls.add(normalize_url(canonical))
+        stream = query.stream()
+        try:
+            async for snap in stream:
+                data = snap.to_dict() or {}
+                canonical = str(data.get("canonical_url") or "").strip()
+                if canonical:
+                    urls.add(normalize_url(canonical))
+        finally:
+            await _close_async_stream(stream)
         return urls
 
     async def get_recent_clusters(self, since_days: int = 7) -> list[PriorClusterRecord]:
@@ -172,26 +188,30 @@ class FirestoreMemoryStore:
         )
 
         records: list[PriorClusterRecord] = []
-        async for snap in query.stream():
-            data = snap.to_dict() or {}
-            updated_at = _parse_firestore_timestamp(data.get("last_updated_at"))
-            if updated_at is None:
-                logger.warning("Skipping Firestore cluster %r with missing timestamp", snap.id)
-                continue
-            try:
-                record = PriorClusterRecord(
-                    cluster_id=str(data.get("cluster_id") or snap.id),
-                    canonical_title=str(data.get("canonical_title") or ""),
-                    topic=str(data.get("topic") or "General"),
-                    summary=str(data.get("summary") or ""),
-                    urls=[str(u) for u in (data.get("urls") or []) if str(u).strip()],
-                    embedding=[float(x) for x in (data.get("embedding") or [])],
-                    last_updated_at=updated_at,
-                )
-            except Exception as exc:
-                logger.warning("Skipping invalid Firestore cluster %r: %s", snap.id, exc)
-                continue
-            records.append(record)
+        stream = query.stream()
+        try:
+            async for snap in stream:
+                data = snap.to_dict() or {}
+                updated_at = _parse_firestore_timestamp(data.get("last_updated_at"))
+                if updated_at is None:
+                    logger.warning("Skipping Firestore cluster %r with missing timestamp", snap.id)
+                    continue
+                try:
+                    record = PriorClusterRecord(
+                        cluster_id=str(data.get("cluster_id") or snap.id),
+                        canonical_title=str(data.get("canonical_title") or ""),
+                        topic=str(data.get("topic") or "General"),
+                        summary=str(data.get("summary") or ""),
+                        urls=[str(u) for u in (data.get("urls") or []) if str(u).strip()],
+                        embedding=[float(x) for x in (data.get("embedding") or [])],
+                        last_updated_at=updated_at,
+                    )
+                except Exception as exc:
+                    logger.warning("Skipping invalid Firestore cluster %r: %s", snap.id, exc)
+                    continue
+                records.append(record)
+        finally:
+            await _close_async_stream(stream)
 
         records.sort(key=lambda r: (-r.last_updated_at.timestamp(), r.cluster_id))
         return records
@@ -297,14 +317,18 @@ class FirestoreMemoryStore:
         batch = client.batch()
         ops_in_batch = 0
 
-        async for snap in query.stream():
-            batch.delete(snap.reference)
-            ops_in_batch += 1
-            deleted += 1
-            if ops_in_batch >= MAX_BATCH_OPS:
-                await batch.commit()
-                batch = client.batch()
-                ops_in_batch = 0
+        stream = query.stream()
+        try:
+            async for snap in stream:
+                batch.delete(snap.reference)
+                ops_in_batch += 1
+                deleted += 1
+                if ops_in_batch >= MAX_BATCH_OPS:
+                    await batch.commit()
+                    batch = client.batch()
+                    ops_in_batch = 0
+        finally:
+            await _close_async_stream(stream)
 
         if ops_in_batch > 0:
             await batch.commit()
