@@ -1,6 +1,6 @@
-# Run the AI news digest agent with uv (for Windows Task Scheduler).
+# Run the agentic news digest pipeline with uv (for Windows Task Scheduler).
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-uv run python (Join-Path $PSScriptRoot "aggregator.py")
+uv run agentic-emailer run
 exit $LASTEXITCODE

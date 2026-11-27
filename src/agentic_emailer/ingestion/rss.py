@@ -1,0 +1,327 @@
+"""Async concurrent RSS ingestion, URL canonicalization, and deterministic article IDs."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import html
+import logging
+import re
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+import feedparser
+import httpx
+from dateutil import parser as date_parser
+from pydantic import ValidationError
+
+from agentic_emailer.ingestion.extractor import fetch_url_safely
+from agentic_emailer.models import RawArticle, RssFeedConfig
+
+logger = logging.getLogger(__name__)
+
+TRACKING_QUERY_KEYS = frozenset(
+    {
+        "ref",
+        "source",
+        "fbclid",
+        "gclid",
+        "mc_cid",
+        "mc_eid",
+        "igshid",
+    }
+)
+MAX_RSS_BYTES = 5_242_880  # 5 MiB cap for RSS/Atom XML documents
+MAX_SNIPPET_CHARS = 800
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def is_valid_http_url(url: str) -> bool:
+    """Return True iff url is a well-formed HTTP(S) URL with a valid host and port."""
+    cleaned = url.strip()
+    if (
+        not cleaned
+        or any(ord(ch) < 32 or ord(ch) == 127 or ch.isspace() for ch in cleaned)
+    ):
+        return False
+    try:
+        parsed = urlparse(cleaned)
+        port = parsed.port
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    if parsed.scheme.lower() not in ("http", "https") or not hostname:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    if "%" in hostname or not hostname.strip("."):
+        return False
+    if port is not None and not (1 <= port <= 65535):
+        return False
+    return True
+
+
+def normalize_seen_urls(seen_urls: Iterable[str]) -> set[str]:
+    """Normalize a collection of previously seen URLs, skipping blank entries."""
+    normalized: set[str] = set()
+    for url in seen_urls:
+        cleaned = url.strip()
+        if not cleaned:
+            continue
+        normalized.add(cleaned)
+        normalized.add(normalize_url(cleaned))
+    return normalized
+
+
+def _first_non_blank(*values: Any) -> str:
+    """Return the first non-blank stripped string among candidate values."""
+    for value in values:
+        if value is None:
+            continue
+        cleaned = str(value).strip()
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def normalize_url(url: str) -> str:
+    """Canonicalize a URL by stripping tracking parameters, fragment, and trailing slash."""
+    cleaned = url.strip()
+    try:
+        parsed = urlparse(cleaned)
+        port = parsed.port
+    except ValueError:
+        return cleaned
+
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+
+    is_default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    if port is not None and not is_default_port:
+        netloc = f"{hostname}:{port}"
+    else:
+        netloc = hostname or parsed.netloc.lower()
+
+    filtered_query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=False)
+        if not key.lower().startswith("utm_") and key.lower() not in TRACKING_QUERY_KEYS
+    ]
+    filtered_query.sort(key=lambda item: (item[0].lower(), item[0], item[1]))
+    clean_query = urlencode(filtered_query)
+
+    path = parsed.path.rstrip("/")
+    return urlunparse((scheme, netloc, path, "", clean_query, ""))
+
+
+def make_article_id(canonical_url: str) -> str:
+    """Generate a deterministic 16-character hex ID from a canonicalized URL."""
+    return hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()[:16]
+
+
+def ensure_utc(dt: datetime) -> datetime:
+    """Convert any datetime to timezone-aware UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def parse_published_datetime(raw: Any) -> datetime | None:
+    """Best-effort parse of a date string into a UTC datetime."""
+    if not raw:
+        return None
+    try:
+        return ensure_utc(date_parser.parse(str(raw)))
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _parse_entry_published(entry: Mapping[str, Any]) -> datetime | None:
+    for key in ("published", "updated", "created"):
+        parsed_dt = parse_published_datetime(entry.get(key))
+        if parsed_dt is not None:
+            return parsed_dt
+
+    for key in ("published_parsed", "updated_parsed"):
+        parsed_struct = entry.get(key)
+        if parsed_struct and len(parsed_struct) >= 6:
+            try:
+                return datetime(
+                    int(parsed_struct[0]),
+                    int(parsed_struct[1]),
+                    int(parsed_struct[2]),
+                    int(parsed_struct[3]),
+                    int(parsed_struct[4]),
+                    int(parsed_struct[5]),
+                    tzinfo=UTC,
+                )
+            except (TypeError, ValueError, IndexError):
+                continue
+    return None
+
+
+def within_lookback(published_at: datetime | None, lookback_hours: int) -> bool:
+    """Return True if an article's timestamp falls within the lookback window (or is unknown)."""
+    if published_at is None:
+        return True
+    cutoff = datetime.now(UTC) - timedelta(hours=lookback_hours)
+    return ensure_utc(published_at) >= cutoff
+
+
+def clean_snippet(raw_snippet: str, max_chars: int = MAX_SNIPPET_CHARS) -> str:
+    """Strip HTML tags, unescape entities, collapse whitespace, and truncate cleanly."""
+    if not raw_snippet or max_chars <= 0:
+        return ""
+    unescaped = html.unescape(raw_snippet)
+    stripped = HTML_TAG_RE.sub(" ", unescaped)
+    compact = re.sub(r"\s+", " ", stripped).strip()
+    if len(compact) <= max_chars:
+        return compact
+    if max_chars <= 3:
+        return compact[:max_chars]
+    return compact[: max_chars - 3].rstrip() + "..."
+
+
+def _parse_feed_entries(
+    entries: list[Any],
+    feed_name: str,
+    lookback_hours: int,
+    max_per_feed: int,
+) -> list[RawArticle]:
+    articles: list[RawArticle] = []
+    if max_per_feed <= 0:
+        return articles
+
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        raw_url = _first_non_blank(entry.get("link"), entry.get("id"))
+        title = " ".join(html.unescape(str(entry.get("title") or "")).split())
+        if not raw_url or not title or not is_valid_http_url(raw_url):
+            continue
+
+        published_at = _parse_entry_published(entry)
+        if not within_lookback(published_at, lookback_hours):
+            continue
+
+        raw_summary = _first_non_blank(entry.get("summary"), entry.get("description"))
+        snippet = clean_snippet(raw_summary)
+
+        canonical_url = normalize_url(raw_url)
+        article_id = make_article_id(canonical_url)
+
+        try:
+            article = RawArticle(
+                article_id=article_id,
+                canonical_url=canonical_url,
+                url=raw_url,
+                title=title,
+                source=feed_name,
+                published_at=published_at,
+                snippet=snippet,
+                discovered_via="rss",
+                topic_hints=[],
+            )
+        except (ValidationError, ValueError) as exc:
+            logger.warning(
+                "Skipping invalid RSS entry from %s (%r): %s",
+                feed_name,
+                raw_url,
+                exc,
+            )
+            continue
+
+        articles.append(article)
+        if len(articles) >= max_per_feed:
+            break
+
+    return articles
+
+
+async def _fetch_single_feed(
+    client: httpx.AsyncClient,
+    feed: RssFeedConfig,
+    lookback_hours: int,
+    max_per_feed: int,
+    semaphore: asyncio.Semaphore,
+) -> list[RawArticle]:
+    async with semaphore:
+        try:
+            fetched = await fetch_url_safely(
+                client,
+                feed.url,
+                max_bytes=MAX_RSS_BYTES,
+                allowed_content_types=None,
+            )
+            if fetched is None:
+                logger.warning(
+                    "Skipping RSS feed %s (%s): fetch failed or blocked", feed.name, feed.url
+                )
+                return []
+
+            _, raw_bytes, encoding = fetched
+            try:
+                xml_text = raw_bytes.decode(encoding, errors="replace")
+            except LookupError:
+                xml_text = raw_bytes.decode("utf-8", errors="replace")
+            parsed = await asyncio.to_thread(feedparser.parse, xml_text)
+        except Exception as exc:
+            logger.warning("Failed to fetch/parse RSS feed %s (%s): %s", feed.name, feed.url, exc)
+            return []
+
+        if getattr(parsed, "bozo", False) and not parsed.entries:
+            logger.warning(
+                "RSS feed %s returned no entries (%s)",
+                feed.name,
+                getattr(parsed, "bozo_exception", ""),
+            )
+            return []
+
+        articles = _parse_feed_entries(
+            list(parsed.entries),
+            feed.name,
+            lookback_hours,
+            max_per_feed,
+        )
+        logger.info("RSS feed %s yielded %d article(s)", feed.name, len(articles))
+        return articles
+
+
+async def fetch_rss_feeds(
+    feeds: list[RssFeedConfig],
+    lookback_hours: int = 36,
+    max_per_feed: int = 15,
+    concurrency: int = 8,
+) -> list[RawArticle]:
+    """Concurrently fetch RSS feeds, normalize URLs, and deduplicate by article_id."""
+    if not feeds:
+        return []
+
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+        tasks = [
+            _fetch_single_feed(client, feed, lookback_hours, max_per_feed, semaphore)
+            for feed in feeds
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    deduped: dict[str, RawArticle] = {}
+    for feed, result in zip(feeds, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.warning("Unexpected RSS fetch failure for %s: %s", feed.name, result)
+            continue
+        for article in result:
+            existing = deduped.get(article.article_id)
+            if existing is None or len(article.snippet) > len(existing.snippet):
+                deduped[article.article_id] = article
+
+    epoch_min = datetime.min.replace(tzinfo=UTC)
+    return sorted(
+        deduped.values(),
+        key=lambda a: ensure_utc(a.published_at) if a.published_at else epoch_min,
+        reverse=True,
+    )

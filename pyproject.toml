@@ -1,30 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "agentic-emailer"
-version = "0.1.0"
-description = "Local AI news aggregator that summarizes updates with Gemini and emails a digest."
+version = "1.0.0"
+description = "Multi-agent news digest pipeline built with Google ADK, Gemini, and deterministic grounding verification."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "duckduckgo-search>=7.0.0",
     "feedparser>=6.0.0",
-    "google-genai>=1.0.0",
-    "markdown>=3.7",
+    "google-adk>=1.0.0",
+    "google-genai>=1.10.0",
+    "httpx>=0.28.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
     "python-dateutil>=2.9.0",
+    "trafilatura>=2.0.0",
 ]
 
 [project.scripts]
-agentic-emailer = "aggregator:main"
+agentic-emailer = "agentic_emailer.cli:main"
+agentic-emailer-eval = "evals.runner:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentic_emailer"]
+dev-mode-dirs = ["src", "."]
 
 [tool.uv]
-package = false
+package = true
 
 [dependency-groups]
 dev = [
+    "mypy>=1.14.0",
     "pytest>=8.0.0",
-    "pytest-cov>=5.0.0",
+    "ruff>=0.9.0",
+    "types-python-dateutil",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+# Keep TypeVar generic functions compatible with requires-python = ">=3.11"
+ignore = ["UP047"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+mypy_path = "src"
+explicit_package_bases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
-
+pythonpath = ["src", "."]
