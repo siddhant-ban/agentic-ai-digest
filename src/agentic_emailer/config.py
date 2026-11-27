@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -88,6 +88,23 @@ class Settings(BaseSettings):
     smtp_sender: str = ""
     email_password: str | None = None
     smtp_password_file: Path = Path("smtp_password.txt")
+
+    # Observability & structured logging settings
+    otel_cloud_trace_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("OTEL_CLOUD_TRACE_ENABLED", "otel_cloud_trace_enabled"),
+    )
+    log_format: Literal["text", "json"] = Field(
+        default="text",
+        validation_alias=AliasChoices("LOG_FORMAT", "log_format"),
+    )
+
+    @field_validator("log_format", mode="before")
+    @classmethod
+    def _normalize_log_format(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
 
     @model_validator(mode="after")
     def _validate_clustering_thresholds(self) -> Settings:

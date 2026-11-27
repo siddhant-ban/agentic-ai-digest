@@ -71,6 +71,11 @@ resource "google_cloud_run_v2_job" "digest" {
         }
 
         env {
+          name  = "LOG_FORMAT"
+          value = "json"
+        }
+
+        env {
           name = "EMAIL_PASSWORD"
           value_source {
             secret_key_ref {
