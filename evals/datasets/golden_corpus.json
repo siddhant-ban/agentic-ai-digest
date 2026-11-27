@@ -1,9 +1,9 @@
 {
-  "dataset_version": "1.0",
+  "dataset_version": "2.0",
   "cases": [
     {
       "case_id": "ai_engineering",
-      "description": "12 AI engineering articles: 2 duplicate-outlet stories, 1 stale URL in seen_urls, 1 thin-snippet article.",
+      "description": "15 AI engineering articles: 3-outlet cluster (Gemini 3.1 Flash-Lite), 1 exact stale URL in seen_urls, 1 semantic cross-day re-hash (InfoWorld Mistral Hub), 1 multi-day developing story (FrontierAI EU AI Office), and 1 thin-snippet article.",
       "recipient": {
         "id": "eval-ai-eng",
         "email_address": "ai-eng@example.com",
@@ -25,6 +25,34 @@
       ],
       "seen_urls": [
         "https://arstechnica.com/ai/2026/11/mistral-enterprise-hub-governance"
+      ],
+      "expected_suppressed_urls": [
+        "https://www.infoworld.com/article/2026/11/mistral-enterprise-hub-on-prem-governance"
+      ],
+      "expected_developing_article_ids": [
+        "bcd4e0af604ff68a"
+      ],
+      "prior_clusters": [
+        {
+          "cluster_id": "prior-mistral-hub",
+          "canonical_title": "Mistral launches Enterprise Hub for on-premise model governance",
+          "topic": "LLM model releases",
+          "summary": "Mistral introduced an on-premise governance suite allowing regulated enterprises to audit prompts, manage fine-tuned model weights, and enforce role-based access policies.",
+          "urls": [
+            "https://arstechnica.com/ai/2026/11/mistral-enterprise-hub-governance"
+          ],
+          "last_updated_at": "2026-11-25T14:00:00Z"
+        },
+        {
+          "cluster_id": "prior-eu-ai-inquiry",
+          "canonical_title": "EU AI Office opens formal compliance inquiry into FrontierAI model disclosures",
+          "topic": "LLM model releases",
+          "summary": "The European Union AI Office opened a formal compliance inquiry into FrontierAI over missing training-data summaries required under EU AI Act transparency rules.",
+          "urls": [
+            "https://www.reuters.com/technology/eu-ai-office-inquiry-frontierai-2026-11-24"
+          ],
+          "last_updated_at": "2026-11-24T11:00:00Z"
+        }
       ],
       "articles": [
         {
@@ -49,6 +77,48 @@
           "source": "TechCrunch",
           "published_at": "2026-11-26T09:30:00Z",
           "snippet": "Targeting developers running high-volume agent loops, Google announced Gemini 3.1 Flash-Lite with 40% faster responses for structured JSON outputs and lower per-token pricing on Vertex AI.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "3563ae78ec20d5a2",
+          "canonical_url": "https://www.theverge.com/2026/11/26/google-gemini-3-1-flash-lite-agent-speed",
+          "url": "https://www.theverge.com/2026/11/26/google-gemini-3-1-flash-lite-agent-speed",
+          "title": "Google rolls out Gemini 3.1 Flash-Lite to speed up structured agent workloads",
+          "source": "The Verge",
+          "published_at": "2026-11-26T09:15:00Z",
+          "snippet": "Google made Gemini 3.1 Flash-Lite available across Vertex AI and the Gemini API today, highlighting a 40% drop in median JSON extraction latency and lower per-token pricing for production agentic workflows.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "bcd4e0af604ff68a",
+          "canonical_url": "https://www.reuters.com/technology/frontierai-revised-transparency-dossier-eu-ai-office-2026-11-26",
+          "url": "https://www.reuters.com/technology/frontierai-revised-transparency-dossier-eu-ai-office-2026-11-26",
+          "title": "FrontierAI publishes revised training-data transparency dossier to settle EU AI Office inquiry",
+          "source": "Reuters Tech",
+          "published_at": "2026-11-26T08:50:00Z",
+          "snippet": "Responding to the EU AI Office compliance inquiry opened earlier this week, FrontierAI released an expanded training-data provenance report and committed to quarterly external audits to resolve the investigation without fines.",
+          "full_text": null,
+          "discovered_via": "rss",
+          "topic_hints": [
+            "LLM model releases"
+          ]
+        },
+        {
+          "article_id": "207e783203886448",
+          "canonical_url": "https://www.infoworld.com/article/2026/11/mistral-enterprise-hub-on-prem-governance",
+          "url": "https://www.infoworld.com/article/2026/11/mistral-enterprise-hub-on-prem-governance",
+          "title": "Mistral unveils on-premise Enterprise Hub for enterprise AI governance and prompt auditing",
+          "source": "InfoWorld",
+          "published_at": "2026-11-26T08:40:00Z",
+          "snippet": "Mistral launched its Enterprise Hub suite for regulated businesses to run on-premise prompt auditing, manage fine-tuned model weights, and enforce role-based access policies.",
           "full_text": null,
           "discovered_via": "rss",
           "topic_hints": [
@@ -199,7 +269,7 @@
     },
     {
       "case_id": "general_tech_science",
-      "description": "10 non-AI clean energy and robotics articles validating domain generalization.",
+      "description": "10 non-AI clean energy and robotics articles validating domain generalization plus 1 multi-day developing story (Form Energy Minnesota battery commissioning).",
       "recipient": {
         "id": "eval-tech-science",
         "email_address": "science@example.com",
@@ -219,6 +289,21 @@
       ],
       "seen_urls": [
         "https://canarymedia.com/articles/2026/11/20/prior-solar-tariff-update"
+      ],
+      "expected_developing_article_ids": [
+        "c0a361c158647547"
+      ],
+      "prior_clusters": [
+        {
+          "cluster_id": "prior-form-energy-groundbreaking",
+          "canonical_title": "Form Energy breaks ground on 100-hour iron-air grid battery pilot in Minnesota",
+          "topic": "Clean energy and grid storage",
+          "summary": "Form Energy began construction on its 10 MW / 1,000 MWh iron-air battery site adjacent to a retiring Minnesota coal plant to test multi-day grid storage.",
+          "urls": [
+            "https://www.canarymedia.com/articles/long-duration-storage/form-energy-minnesota-construction-2026-11-21"
+          ],
+          "last_updated_at": "2026-11-21T15:00:00Z"
+        }
       ],
       "articles": [
         {

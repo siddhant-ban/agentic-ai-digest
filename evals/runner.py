@@ -17,8 +17,14 @@ from agentic_emailer.budget import RunBudgetTracker
 from agentic_emailer.config import Settings
 from agentic_emailer.delivery.renderer import build_fallback_draft
 from agentic_emailer.ingestion.rss import make_article_id, normalize_seen_urls, normalize_url
-from agentic_emailer.models import DigestDraft, RawArticle, RecipientProfile
-from agentic_emailer.pipeline import build_singleton_clusters, run_editorial_loop, safe_print
+from agentic_emailer.memory import (
+    PriorClusterRecord,
+    build_article_embedding_text,
+    cluster_and_link_stories,
+    embed_texts,
+)
+from agentic_emailer.models import RawArticle, RecipientProfile
+from agentic_emailer.pipeline import run_editorial_loop, safe_print
 from evals.judges import evaluate_digest_with_judge
 from evals.metrics import (
     CaseEvalResult,
@@ -40,6 +46,7 @@ DEFAULT_BASELINE_PATH = EVALS_DIR / "reports" / "baseline.json"
 HARD_GATE_URL_GROUNDING = 1.0
 HARD_GATE_DUPLICATE_LEAKAGE = 0.0
 HARD_GATE_SCHEMA_VALIDITY = 1.0
+HARD_GATE_DEVELOPING_STORY_RECALL = 0.80
 HARD_GATE_FAITHFULNESS = 4.0
 
 
@@ -65,6 +72,16 @@ def _hydrate_article(raw: dict[str, Any]) -> RawArticle:
     )
 
 
+def _hydrate_prior_cluster(raw: dict[str, Any]) -> PriorClusterRecord:
+    return PriorClusterRecord.model_validate(raw)
+
+
+def _prior_cluster_embedding_text(record: PriorClusterRecord) -> str:
+    title = record.canonical_title.strip()
+    summary = record.summary.strip()
+    return f"{title}\n{summary}".strip() if summary else title
+
+
 def _check_hard_gates(summary: EvalSummary, mode: str) -> list[str]:
     failures: list[str] = []
     if summary.schema_validity_rate < HARD_GATE_SCHEMA_VALIDITY:
@@ -79,6 +96,11 @@ def _check_hard_gates(summary: EvalSummary, mode: str) -> list[str]:
         failures.append(
             f"duplicate_leakage_rate {summary.duplicate_leakage_rate:.4f} > "
             f"{HARD_GATE_DUPLICATE_LEAKAGE}"
+        )
+    if summary.developing_story_recall < HARD_GATE_DEVELOPING_STORY_RECALL:
+        failures.append(
+            f"developing_story_recall {summary.developing_story_recall:.4f} < "
+            f"{HARD_GATE_DEVELOPING_STORY_RECALL}"
         )
     if mode == "full":
         if summary.mean_faithfulness is None or summary.mean_faithfulness < HARD_GATE_FAITHFULNESS:
@@ -122,6 +144,8 @@ def _format_scorecard_markdown(
         _row("schema_validity_rate", 4, "== 1.0000"),
         _row("url_grounding_rate", 4, "== 1.0000"),
         _row("duplicate_leakage_rate", 4, "== 0.0000"),
+        _row("developing_story_recall", 4, ">= 0.8000"),
+        _row("cluster_compression_ratio", 4, "info"),
         _row("topic_coverage_rate", 4, ">= 0.8500"),
         _row("trajectory_precision", 4, ">= 0.8000"),
         _row("avg_revisions", 2, "info"),
@@ -154,9 +178,15 @@ def _format_scorecard_markdown(
                 f" | judge(F={case.judge.faithfulness}, R={case.judge.relevance}, "
                 f"S={case.judge.synthesis_quality}, C={case.judge.conciseness})"
             )
+        dev_str = (
+            f", dev_recall={case.developing_story_recall:.2f}"
+            if case.developing_story_recall is not None
+            else ""
+        )
         lines.append(
             f"- **{case.case_id}**: schema={case.schema_valid}, "
             f"grounding={case.url_grounding_rate:.2f}, leakage={case.duplicate_leakage_rate:.2f}, "
+            f"comp={case.cluster_compression_ratio:.2f}x{dev_str}, "
             f"topic_cov={case.topic_coverage_rate:.2f}, rev={case.revisions}, "
             f"latency={case.latency_ms:.0f}ms{judge_str}"
         )
@@ -191,11 +221,10 @@ def run_deterministic_eval(
     corpus_data = _load_json(corpus_path)
     trajectory_data = _load_json(trajectory_path)
 
-    cached_drafts: dict[str, DigestDraft] = {}
+    cached_cases: dict[str, CaseEvalResult] = {}
     if baseline is not None:
         for case in baseline.cases:
-            if case.draft is not None:
-                cached_drafts[case.case_id] = case.draft
+            cached_cases[case.case_id] = case
 
     case_results: list[CaseEvalResult] = []
     for raw_case in corpus_data["cases"]:
@@ -203,23 +232,47 @@ def run_deterministic_eval(
         t0 = time.perf_counter()
         profile = RecipientProfile.model_validate(raw_case["recipient"])
         articles = [_hydrate_article(a) for a in raw_case["articles"]]
+        _ = [_hydrate_prior_cluster(pc) for pc in (raw_case.get("prior_clusters") or [])]
         seen_urls = set(raw_case.get("seen_urls") or [])
+        suppressed_urls = set(raw_case.get("expected_suppressed_urls") or [])
+        expected_dev_ids = list(raw_case.get("expected_developing_article_ids") or [])
         available_topics = list(raw_case.get("available_topics") or profile.topics)
 
-        normalized_seen = normalize_seen_urls(seen_urls)
+        # Validate expected_developing_article_ids exist in case articles
+        article_ids = {a.article_id for a in articles}
+        unknown_dev = set(expected_dev_ids) - article_ids
+        if unknown_dev:
+            raise ValueError(
+                f"Golden case {case_id!r} references unknown developing article_ids: "
+                f"{sorted(unknown_dev)}"
+            )
+
+        normalized_disallowed = normalize_seen_urls(seen_urls | suppressed_urls)
         unseen_articles = [
             a
             for a in articles
-            if a.canonical_url not in normalized_seen
-            and normalize_url(a.url) not in normalized_seen
-            and a.url not in normalized_seen
+            if a.canonical_url not in normalized_disallowed
+            and normalize_url(a.url) not in normalized_disallowed
+            and a.url not in normalized_disallowed
         ]
 
-        draft = cached_drafts.get(case_id) or build_fallback_draft(
-            unseen_articles,
-            profile.topics,
-            max_highlights=profile.max_highlights,
-        )
+        cached = cached_cases.get(case_id)
+        cached_draft = cached.draft if cached is not None else None
+        if cached_draft is not None:
+            draft = cached_draft
+            used_fallback = False
+            clusters_formed = (
+                cached.clusters_formed if cached and cached.clusters_formed > 0 else None
+            )
+        else:
+            draft = build_fallback_draft(
+                unseen_articles,
+                profile.topics,
+                max_highlights=profile.max_highlights,
+            )
+            used_fallback = True
+            clusters_formed = len(unseen_articles)
+
         latency_ms = (time.perf_counter() - t0) * 1000.0
         case_results.append(
             compute_case_metrics(
@@ -229,10 +282,13 @@ def run_deterministic_eval(
                 seen_urls,
                 profile.topics,
                 available_topics=available_topics,
+                suppressed_urls=suppressed_urls,
+                expected_developing_article_ids=expected_dev_ids,
+                clusters_formed=clusters_formed,
                 max_highlights=profile.max_highlights,
                 revisions=0,
                 latency_ms=latency_ms,
-                used_fallback=case_id not in cached_drafts,
+                used_fallback=used_fallback,
             )
         )
 
@@ -312,15 +368,67 @@ async def run_full_eval(
         case_id = str(raw_case["case_id"])
         profile = RecipientProfile.model_validate(raw_case["recipient"])
         articles = [_hydrate_article(a) for a in raw_case["articles"]]
+        prior_clusters = [
+            _hydrate_prior_cluster(pc) for pc in (raw_case.get("prior_clusters") or [])
+        ]
         seen_urls = set(raw_case.get("seen_urls") or [])
+        suppressed_urls = set(raw_case.get("expected_suppressed_urls") or [])
+        expected_dev_ids = list(raw_case.get("expected_developing_article_ids") or [])
         available_topics = list(raw_case.get("available_topics") or profile.topics)
 
-        # Include all case articles (including any planted stale URLs) so SynthesisAgent
-        # prompt adherence AND deterministic verifier stale-URL blocking are tested end-to-end.
-        clusters = build_singleton_clusters(articles)
+        # Embed unseen articles + any prior clusters without precomputed vectors in one batch call
+        normalized_seen = normalize_seen_urls(seen_urls)
+        unseen_indices = [
+            idx
+            for idx, art in enumerate(articles)
+            if art.canonical_url not in normalized_seen
+            and normalize_url(art.url) not in normalized_seen
+            and art.url not in normalized_seen
+        ]
+        priors_needing_emb = [
+            idx for idx, pc in enumerate(prior_clusters) if not pc.embedding
+        ]
+        texts_to_embed = [
+            build_article_embedding_text(articles[idx]) for idx in unseen_indices
+        ] + [
+            _prior_cluster_embedding_text(prior_clusters[idx]) for idx in priors_needing_emb
+        ]
 
-        logger.info("Running full eval case: %s (%d clusters)", case_id, len(clusters))
         t0 = time.perf_counter()
+        batch_vectors = (
+            await embed_texts(texts_to_embed, settings, budget) if texts_to_embed else []
+        )
+
+        article_embeddings: list[list[float]] = [[] for _ in articles]
+        for pos, art_idx in enumerate(unseen_indices):
+            article_embeddings[art_idx] = batch_vectors[pos]
+
+        hydrated_priors = list(prior_clusters)
+        offset = len(unseen_indices)
+        for pos, prior_idx in enumerate(priors_needing_emb):
+            hydrated_priors[prior_idx] = hydrated_priors[prior_idx].model_copy(
+                update={"embedding": batch_vectors[offset + pos]}
+            )
+
+        clusters, cross_day_deduped = cluster_and_link_stories(
+            articles,
+            article_embeddings,
+            seen_urls,
+            hydrated_priors,
+            merge_threshold=settings.cluster_merge_threshold,
+            storyline_threshold=settings.storyline_link_threshold,
+            semantic_dedup_threshold=settings.semantic_dedup_threshold,
+        )
+        developing_linked = sum(1 for c in clusters if c.is_developing_story)
+
+        logger.info(
+            "Running full eval case: %s (%d articles -> %d clusters, %d deduped, %d developing)",
+            case_id,
+            len(articles),
+            len(clusters),
+            cross_day_deduped,
+            developing_linked,
+        )
         editorial = await run_editorial_loop(
             profile,
             clusters,
@@ -334,9 +442,10 @@ async def run_full_eval(
             editorial.draft,
             articles,
             profile.topics,
-            seen_urls,
+            seen_urls | suppressed_urls,
             model=resolved_judge_model,
             budget=budget,
+            clusters=clusters,
         )
 
         case_results.append(
@@ -347,6 +456,9 @@ async def run_full_eval(
                 seen_urls,
                 profile.topics,
                 available_topics=available_topics,
+                suppressed_urls=suppressed_urls,
+                expected_developing_article_ids=expected_dev_ids,
+                clusters_formed=len(clusters),
                 max_highlights=profile.max_highlights,
                 revisions=editorial.revisions,
                 latency_ms=latency_ms,
@@ -424,6 +536,7 @@ async def run_full_eval(
             "synthesis_model": settings.synthesis_model,
             "critic_model": settings.critic_model,
             "judge_model": resolved_judge_model,
+            "embedding_model": settings.embedding_model,
         },
         timestamp_utc=datetime.now(UTC).isoformat(),
         summary=summary,
