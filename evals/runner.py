@@ -86,6 +86,7 @@ def _validate_case_expectations(
     case_id: str,
     articles: list[RawArticle],
     expected_dev_ids: list[str],
+    expected_suppressed_urls: set[str],
 ) -> None:
     article_ids = {a.article_id for a in articles}
     unknown_dev = set(expected_dev_ids) - article_ids
@@ -93,6 +94,15 @@ def _validate_case_expectations(
         raise ValueError(
             f"Golden case {case_id!r} references unknown developing article_ids: "
             f"{sorted(unknown_dev)}"
+        )
+    article_urls = {normalize_url(a.canonical_url or a.url) for a in articles} | {
+        normalize_url(a.url) for a in articles
+    }
+    unknown_suppressed = normalize_seen_urls(expected_suppressed_urls) - article_urls
+    if unknown_suppressed:
+        raise ValueError(
+            f"Golden case {case_id!r} references unknown expected_suppressed_urls: "
+            f"{sorted(unknown_suppressed)}"
         )
 
 
@@ -251,7 +261,7 @@ def run_deterministic_eval(
         suppressed_urls = set(raw_case.get("expected_suppressed_urls") or [])
         expected_dev_ids = list(raw_case.get("expected_developing_article_ids") or [])
         available_topics = list(raw_case.get("available_topics") or profile.topics)
-        _validate_case_expectations(case_id, articles, expected_dev_ids)
+        _validate_case_expectations(case_id, articles, expected_dev_ids, suppressed_urls)
 
         normalized_disallowed = normalize_seen_urls(seen_urls | suppressed_urls)
         unseen_articles = [
@@ -381,7 +391,7 @@ async def run_full_eval(
         suppressed_urls = set(raw_case.get("expected_suppressed_urls") or [])
         expected_dev_ids = list(raw_case.get("expected_developing_article_ids") or [])
         available_topics = list(raw_case.get("available_topics") or profile.topics)
-        _validate_case_expectations(case_id, articles, expected_dev_ids)
+        _validate_case_expectations(case_id, articles, expected_dev_ids, suppressed_urls)
 
         # Embed unseen articles + any prior clusters without precomputed vectors in one batch call
         normalized_seen = normalize_seen_urls(seen_urls)
@@ -455,6 +465,11 @@ async def run_full_eval(
             clusters=clusters,
         )
 
+        active_cluster_urls = {
+            normalize_url(a.canonical_url or a.url) for c in clusters for a in c.articles
+        }
+        clustered_articles_count = sum(len(c.articles) for c in clusters)
+
         case_results.append(
             compute_case_metrics(
                 case_id,
@@ -466,6 +481,8 @@ async def run_full_eval(
                 suppressed_urls=suppressed_urls,
                 expected_developing_article_ids=expected_dev_ids,
                 clusters_formed=len(clusters),
+                clustered_articles_count=clustered_articles_count,
+                active_cluster_urls=active_cluster_urls,
                 max_highlights=profile.max_highlights,
                 revisions=editorial.revisions,
                 latency_ms=latency_ms,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
@@ -98,10 +99,27 @@ class FirestoreMemoryStore:
         return self._client
 
     def close(self) -> None:
-        """Close the underlying Firestore AsyncClient gRPC channel if initialized."""
+        """Synchronously release the underlying Firestore client reference if initialized."""
         if self._client is not None:
             self._client.close()
             self._client = None
+
+    async def aclose(self) -> None:
+        """Asynchronously close the Firestore AsyncClient gRPC asyncio channel if initialized."""
+        client = self._client
+        self._client = None
+        if client is None:
+            return
+        transport = getattr(client, "_transport", None)
+        try:
+            if transport is not None:
+                close_fn = getattr(transport, "close", None)
+                if callable(close_fn):
+                    close_result = close_fn()
+                    if inspect.isawaitable(close_result):
+                        await close_result
+        finally:
+            client.close()
 
     async def load_active_profiles(self) -> list[RecipientProfile]:
         """Load enabled RecipientProfiles using a single-field equality filter."""
@@ -245,7 +263,7 @@ class FirestoreMemoryStore:
                     "source": article.source,
                     "first_seen_at": now,
                 }
-                cluster_id = cluster_ids.get(doc_id, "").strip()
+                cluster_id = (cluster_ids.get(doc_id) or "").strip()
                 if cluster_id:
                     payload["cluster_id"] = cluster_id
                 if clean_recipient:
@@ -287,7 +305,7 @@ class FirestoreMemoryStore:
                 }
                 if urls:
                     payload["urls"] = firestore.ArrayUnion(urls)
-                if cluster.embedding is not None:
+                if cluster.embedding:
                     payload["embedding"] = [float(x) for x in cluster.embedding]
                 batch.set(collection.document(doc_id), payload, merge=True)
             await batch.commit()

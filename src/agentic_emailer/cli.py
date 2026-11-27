@@ -11,6 +11,7 @@ from pathlib import Path
 from agentic_emailer.config import Settings
 from agentic_emailer.memory import create_memory_store
 from agentic_emailer.pipeline import (
+    close_memory_store,
     load_json_config,
     load_profiles_from_file,
     run_digest_pipeline,
@@ -148,20 +149,20 @@ async def _handle_seed_profiles(args: argparse.Namespace) -> int:
         logger.error("No valid recipient profiles found in %s", source_path)
         return 1
 
+    deduped_profiles = list({p.id: p for p in profiles}.values())
+
     settings = Settings()
     if args.backend is not None:
         settings = settings.model_copy(update={"memory_backend": args.backend})
 
     store = create_memory_store(settings)
     try:
-        upserted = await store.upsert_profiles(profiles)
+        upserted = await store.upsert_profiles(deduped_profiles)
     finally:
-        close_fn = getattr(store, "close", None)
-        if callable(close_fn):
-            close_fn()
+        await close_memory_store(store)
 
-    enabled_count = sum(1 for p in profiles if p.enabled)
-    disabled_count = len(profiles) - enabled_count
+    enabled_count = sum(1 for p in deduped_profiles if p.enabled)
+    disabled_count = len(deduped_profiles) - enabled_count
     target_desc = (
         f"local ({settings.local_memory_dir})"
         if settings.memory_backend == "local"

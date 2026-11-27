@@ -62,6 +62,10 @@ class LocalJsonMemoryStore:
     def close(self) -> None:
         """No-op cleanup matching FirestoreMemoryStore lifecycle."""
 
+    async def aclose(self) -> None:
+        """Async no-op cleanup matching FirestoreMemoryStore lifecycle."""
+        self.close()
+
     def _read_mapping(self, path: Path) -> dict[str, dict[str, Any]]:
         if not path.exists():
             return {}
@@ -117,6 +121,7 @@ class LocalJsonMemoryStore:
                 continue
             if profile.enabled:
                 profiles.append(profile)
+        profiles.sort(key=lambda p: p.id)
         return profiles
 
     async def upsert_profiles(self, profiles: list[RecipientProfile]) -> int:
@@ -192,7 +197,8 @@ class LocalJsonMemoryStore:
         """Persist sent articles with recipient tracking while preserving earliest first_seen_at."""
         if not articles:
             return
-        now_iso = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
+        now_iso = now.isoformat()
         clean_recipient = recipient_id.strip()
 
         with self._lock:
@@ -209,15 +215,22 @@ class LocalJsonMemoryStore:
                 if clean_recipient and clean_recipient not in recipients:
                     recipients.append(clean_recipient)
 
-                first_seen = (
-                    existing.get("first_seen_at")
-                    if existing and existing.get("first_seen_at")
-                    else now_iso
+                existing_first_seen = (
+                    _parse_iso_datetime(existing.get("first_seen_at")) if existing else None
                 )
+                # Preserve earliest timestamp within the same run/day across recipients, but
+                # refresh if a previously expired evergreen article is sent again on a later day.
+                if (
+                    existing_first_seen is not None
+                    and (now - existing_first_seen) <= timedelta(days=1)
+                ):
+                    first_seen = existing_first_seen.isoformat()
+                else:
+                    first_seen = now_iso
+
                 cluster_id = (
-                    cluster_ids.get(article.article_id)
-                    or (existing.get("cluster_id") if existing else None)
-                    or ""
+                    (cluster_ids.get(article.article_id) or "").strip()
+                    or (str(existing.get("cluster_id") or "").strip() if existing else "")
                 )
                 raw_map[article.article_id] = {
                     "article_id": article.article_id,
@@ -254,12 +267,22 @@ class LocalJsonMemoryStore:
                         merged_urls.append(canon)
 
                 embedding: list[float]
-                if cluster.embedding is not None:
+                if cluster.embedding:
                     embedding = [float(x) for x in cluster.embedding]
                 elif existing and isinstance(existing.get("embedding"), list):
                     embedding = [float(x) for x in existing["embedding"]]
                 else:
                     embedding = []
+
+                existing_summary = (
+                    str(existing.get("summary") or "").strip() if existing else ""
+                )
+                if cluster.summary and cluster.summary.strip():
+                    summary = derive_cluster_summary(cluster)
+                elif existing_summary:
+                    summary = existing_summary
+                else:
+                    summary = derive_cluster_summary(cluster)
 
                 created_at = (
                     existing.get("created_at")
@@ -270,7 +293,7 @@ class LocalJsonMemoryStore:
                     "cluster_id": cluster.cluster_id,
                     "canonical_title": cluster.canonical_title,
                     "topic": cluster.topic,
-                    "summary": derive_cluster_summary(cluster),
+                    "summary": summary,
                     "urls": merged_urls,
                     "embedding": embedding,
                     "created_at": created_at,

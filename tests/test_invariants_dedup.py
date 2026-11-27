@@ -117,6 +117,30 @@ def test_same_day_clustering_merges_near_vectors_and_separates_orthogonal_topics
     with pytest.raises(ValueError, match="equal length"):
         cluster_and_link_stories([art_new], [], set(), [])
 
+    # Same-day duplicate canonical URLs coalesce while preserving full_text and merged topic_hints
+    dup_thin = _make_article(
+        "https://example.com/dup-story",
+        "Duplicate Story",
+        published_at=now,
+        topic="AI",
+    )
+    dup_rich = _make_article(
+        "https://example.com/dup-story?utm_source=feed",
+        "Duplicate Story",
+        published_at=now - timedelta(minutes=5),
+        topic="Cloud",
+    ).model_copy(update={"full_text": "Full extracted body text."})
+    dup_clusters, dup_deduped = cluster_and_link_stories(
+        [dup_thin, dup_rich],
+        [_unit([1.0, 0.0, 0.0, 0.0]), _unit([1.0, 0.0, 0.0, 0.0])],
+        seen_urls=set(),
+        prior_clusters=[],
+    )
+    assert dup_deduped == 0
+    assert len(dup_clusters) == 1
+    assert dup_clusters[0].articles[0].full_text == "Full extracted body text."
+    assert set(dup_clusters[0].articles[0].topic_hints) == {"AI", "Cloud"}
+
 
 def test_cross_day_thresholds_suppress_rehash_and_link_developing_story() -> None:
     now = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
@@ -198,6 +222,20 @@ def test_cross_day_thresholds_suppress_rehash_and_link_developing_story() -> Non
     assert fresh_cluster.prior_story_summary is None
     assert fresh_cluster.prior_digest_date is None
 
+    # Duplicate copies of the same already-seen URL must only increment deduped count once
+    art_exact_seen_dup = _make_article(
+        f"{seen_url}?ref=homepage",
+        "Already Sent Story (dup copy)",
+        published_at=now - timedelta(minutes=1),
+    )
+    _, deduped_dup = cluster_and_link_stories(
+        [art_exact_seen, art_exact_seen_dup],
+        [_unit([0.0, 0.0, 1.0, 0.0]), _unit([0.0, 0.0, 1.0, 0.0])],
+        seen_urls={seen_url},
+        prior_clusters=[],
+    )
+    assert deduped_dup == 1
+
 
 def test_local_json_memory_store_roundtrip_and_pruning(tmp_path: Path) -> None:
     async def _exercise() -> None:
@@ -250,10 +288,24 @@ def test_local_json_memory_store_roundtrip_and_pruning(tmp_path: Path) -> None:
             embedding=_unit([1.0, 0.0, 0.0, 0.0]),
         )
         await store.save_story_clusters([fresh_cluster])
+        # Updating a cluster without embedding/summary must preserve stored embedding and summary
+        await store.save_story_clusters(
+            [
+                StoryCluster(
+                    cluster_id="cluster-fresh",
+                    canonical_title="Fresh Story",
+                    topic="AI agents",
+                    articles=[fresh_article],
+                    summary=None,
+                    embedding=[],
+                )
+            ]
+        )
         recent_clusters = await store.get_recent_clusters(since_days=7)
         assert len(recent_clusters) == 1
         assert recent_clusters[0].cluster_id == "cluster-fresh"
         assert recent_clusters[0].summary == "Concise summary of the fresh story."
+        assert len(recent_clusters[0].embedding) == 4
 
         now = datetime.now(UTC)
         await store.save_run_metrics(
@@ -302,5 +354,23 @@ def test_local_json_memory_store_roundtrip_and_pruning(tmp_path: Path) -> None:
         )
         assert "https://example.com/fresh-story" in await store.get_seen_urls(since_days=14)
         assert len(await store.get_recent_clusters(since_days=7)) == 1
+
+        # Re-sending an evergreen article older than 14 days refreshes its 14-day suppression window
+        evergreen = _make_article("https://example.com/evergreen", "Evergreen Guide")
+        seen_now = json.loads(store.seen_articles_path.read_text(encoding="utf-8"))
+        seen_now[evergreen.article_id] = {
+            "article_id": evergreen.article_id,
+            "canonical_url": evergreen.canonical_url,
+            "title": evergreen.title,
+            "source": evergreen.source,
+            "first_seen_at": (now - timedelta(days=15)).isoformat(),
+            "recipient_ids_sent": ["alice"],
+            "cluster_id": "cluster-evergreen",
+        }
+        store.seen_articles_path.write_text(json.dumps(seen_now), encoding="utf-8")
+        assert evergreen.canonical_url not in await store.get_seen_urls(since_days=14)
+        await store.record_sent_articles([evergreen], "alice", {evergreen.article_id: "c-new"})
+        assert evergreen.canonical_url in await store.get_seen_urls(since_days=14)
+        await store.aclose()
 
     asyncio.run(_exercise())

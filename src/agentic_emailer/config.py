@@ -96,6 +96,12 @@ class Settings(BaseSettings):
                 "storyline_link_threshold must be <= semantic_dedup_threshold "
                 f"({self.storyline_link_threshold} > {self.semantic_dedup_threshold})"
             )
+        min_retention = max(self.seen_url_window_days, self.storyline_window_days)
+        if self.memory_retention_days < min_retention:
+            raise ValueError(
+                "memory_retention_days must be >= max(seen_url_window_days, "
+                f"storyline_window_days) ({self.memory_retention_days} < {min_retention})"
+            )
         return self
 
     def resolve_gemini_api_key(self, base_dir: Path | None = None) -> str | None:

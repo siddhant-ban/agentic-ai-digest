@@ -119,8 +119,10 @@ async def evaluate_digest_with_judge(
                 )
                 await asyncio.sleep(delay)
     finally:
-        await client.aio.aclose()
-        client.close()
+        try:
+            await client.aio.aclose()
+        finally:
+            client.close()
 
     assert response is not None
 

@@ -138,6 +138,8 @@ def compute_case_metrics(
     suppressed_urls: set[str] | None = None,
     expected_developing_article_ids: list[str] | None = None,
     clusters_formed: int | None = None,
+    clustered_articles_count: int | None = None,
+    active_cluster_urls: set[str] | None = None,
     max_highlights: int | None = None,
     revisions: int = 0,
     latency_ms: float = 0.0,
@@ -194,12 +196,25 @@ def compute_case_metrics(
                 leaked_citations += 1
             seen_in_digest.add(norm_u)
 
+    verification_errors = list(verification.errors)
+    leaked_suppressed_clusters = 0
+    if active_cluster_urls is not None and suppressed_urls:
+        normalized_active = normalize_seen_urls(active_cluster_urls)
+        for sup_url in sorted(normalize_seen_urls(suppressed_urls)):
+            if sup_url in normalized_active:
+                leaked_suppressed_clusters += 1
+                verification_errors.append(
+                    f"Expected suppressed near-duplicate URL survived Stage 4 clustering: {sup_url}"
+                )
+
     if total_citations == 0:
         url_grounding_rate = 1.0 if not unseen_non_suppressed else 0.0
-        duplicate_leakage_rate = 0.0
+        duplicate_leakage_rate = 1.0 if leaked_suppressed_clusters > 0 else 0.0
     else:
         url_grounding_rate = round(grounded_citations / total_citations, 4)
-        duplicate_leakage_rate = round(leaked_citations / total_citations, 4)
+        total_leak_checks = total_citations + leaked_suppressed_clusters
+        total_leaks = leaked_citations + leaked_suppressed_clusters
+        duplicate_leakage_rate = round(total_leaks / total_leak_checks, 4)
 
     # Topic coverage over recipient topics that actually have available unseen articles
     target_topics = available_topics if available_topics is not None else topics
@@ -244,11 +259,16 @@ def compute_case_metrics(
                 matched_dev_count += 1
         developing_story_recall = round(matched_dev_count / expected_dev_count, 4)
 
-    # Cluster compression ratio: unseen candidate articles / active clusters formed (>= 1.0)
-    unseen_count = len(unseen_articles)
-    effective_clusters = clusters_formed if clusters_formed is not None else unseen_count
+    # Cluster compression ratio: active clustered articles / clusters formed (>= 1.0),
+    # excluding cross-day suppressed duplicates so clustering compression stays pure.
+    effective_article_count = (
+        clustered_articles_count
+        if clustered_articles_count is not None
+        else len(unseen_non_suppressed)
+    )
+    effective_clusters = clusters_formed if clusters_formed is not None else effective_article_count
     cluster_compression_ratio = (
-        round(unseen_count / effective_clusters, 4) if effective_clusters > 0 else 1.0
+        round(effective_article_count / effective_clusters, 4) if effective_clusters > 0 else 1.0
     )
 
     return CaseEvalResult(
@@ -262,11 +282,11 @@ def compute_case_metrics(
         matched_developing_stories=matched_dev_count,
         cluster_compression_ratio=cluster_compression_ratio,
         clusters_formed=effective_clusters,
-        unseen_articles_count=unseen_count,
+        unseen_articles_count=effective_article_count,
         revisions=revisions,
         latency_ms=round(latency_ms, 1),
         used_fallback=used_fallback,
-        verification_errors=verification.errors,
+        verification_errors=verification_errors,
         judge=judge,
         draft=draft,
     )

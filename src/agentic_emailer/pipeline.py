@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -799,6 +800,30 @@ def _collect_sent_articles_and_clusters(
     return list(sent_articles_by_id.values()), cluster_ids_for_articles, saved_clusters
 
 
+async def close_memory_store(store: MemoryStore) -> None:
+    """Close a MemoryStore asynchronously if it defines `aclose()`, else synchronously."""
+    aclose_fn = getattr(store, "aclose", None)
+    if callable(aclose_fn):
+        result = aclose_fn()
+        if inspect.isawaitable(result):
+            await result
+        return
+    close_fn = getattr(store, "close", None)
+    if callable(close_fn):
+        close_fn()
+
+
+def _article_sort_timestamp(article: RawArticle) -> float:
+    if article.published_at is None:
+        return float("-inf")
+    dt = (
+        article.published_at.replace(tzinfo=UTC)
+        if article.published_at.tzinfo is None
+        else article.published_at.astimezone(UTC)
+    )
+    return dt.timestamp()
+
+
 async def run_digest_pipeline(
     *,
     settings: Settings | None = None,
@@ -928,30 +953,13 @@ async def run_digest_pipeline(
                 seen_urls=active_seen_urls,
             )
 
-        # Stage 4: Pre-filter exact seen URLs (avoid embedding already-sent URLs), then embed,
-        # cluster same-day coverage, suppress cross-day re-hashes, and link developing stories.
-        # Sort preferring extracted full_text and newest timestamp before same-day URL dedup.
-        sorted_articles = sorted(
-            all_articles,
-            key=lambda a: (
-                0 if a.full_text else 1,
-                -(
-                    (
-                        a.published_at.replace(tzinfo=UTC)
-                        if a.published_at.tzinfo is None
-                        else a.published_at.astimezone(UTC)
-                    ).timestamp()
-                    if a.published_at is not None
-                    else float("-inf")
-                ),
-                a.article_id,
-            ),
-        )
-        unseen_candidates: list[RawArticle] = []
-        seen_today_canonical: set[str] = set()
+        # Stage 4: Pre-filter exact seen URLs (avoid embedding already-sent URLs) and coalesce
+        # same-day URL duplicates (preferring full_text and preserving merged topic_hints).
+        grouped_unseen: dict[str, list[RawArticle]] = {}
+        counted_seen_canonical: set[str] = set()
         exact_seen_deduped = 0
 
-        for article in sorted_articles:
+        for article in all_articles:
             canon = normalize_url(article.canonical_url or article.url)
             raw_norm = normalize_url(article.url)
             if (
@@ -959,12 +967,41 @@ async def run_digest_pipeline(
                 or raw_norm in active_seen_urls
                 or article.url in active_seen_urls
             ):
-                exact_seen_deduped += 1
+                if canon not in counted_seen_canonical:
+                    counted_seen_canonical.add(canon)
+                    exact_seen_deduped += 1
                 continue
-            if canon in seen_today_canonical:
+            grouped_unseen.setdefault(canon, []).append(article)
+
+        unseen_candidates: list[RawArticle] = []
+        for copies in grouped_unseen.values():
+            if len(copies) == 1:
+                unseen_candidates.append(copies[0])
                 continue
-            seen_today_canonical.add(canon)
-            unseen_candidates.append(article)
+            copies.sort(
+                key=lambda a: (
+                    0 if a.full_text else 1,
+                    -_article_sort_timestamp(a),
+                    a.article_id,
+                )
+            )
+            winner = copies[0]
+            merged_hints: list[str] = []
+            seen_hints: set[str] = set()
+            for copy_art in copies:
+                for hint in copy_art.topic_hints:
+                    cleaned = hint.strip()
+                    key = cleaned.lower()
+                    if cleaned and key not in seen_hints:
+                        seen_hints.add(key)
+                        merged_hints.append(cleaned)
+            if merged_hints != winner.topic_hints:
+                winner = winner.model_copy(update={"topic_hints": merged_hints})
+            unseen_candidates.append(winner)
+
+        unseen_candidates.sort(
+            key=lambda a: (-_article_sort_timestamp(a), a.article_id, a.canonical_url)
+        )
 
         articles_deduped_cross_day = exact_seen_deduped
         if gather_only or not unseen_candidates:
@@ -1172,6 +1209,4 @@ async def run_digest_pipeline(
         return results, metrics
     finally:
         if owns_store:
-            close_fn = getattr(store, "close", None)
-            if callable(close_fn):
-                close_fn()
+            await close_memory_store(store)

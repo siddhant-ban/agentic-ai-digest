@@ -124,9 +124,10 @@ def cluster_and_link_stories(
 
     normalized_seen = normalize_seen_urls(seen_urls)
     deduped_count = 0
+    counted_seen_canonical: set[str] = set()
 
-    # Step 1: Hard exact URL dedup vs. prior seen_urls + same-day exact canonical dedup
-    unseen_pairs: list[tuple[RawArticle, np.ndarray | None]] = []
+    # Step 1: Hard exact URL dedup vs. prior seen_urls + same-day canonical URL coalescing
+    grouped_unseen: dict[str, list[tuple[RawArticle, np.ndarray | None]]] = {}
     for article, raw_emb in zip(articles, embeddings, strict=True):
         canonical = normalize_url(article.canonical_url or article.url)
         raw_norm = normalize_url(article.url)
@@ -135,30 +136,59 @@ def cluster_and_link_stories(
             or raw_norm in normalized_seen
             or article.url in normalized_seen
         ):
-            deduped_count += 1
+            if canonical not in counted_seen_canonical:
+                counted_seen_canonical.add(canonical)
+                deduped_count += 1
             continue
-        unseen_pairs.append((article, _to_unit_vector(raw_emb)))
+        grouped_unseen.setdefault(canonical, []).append((article, _to_unit_vector(raw_emb)))
 
-    if not unseen_pairs:
+    if not grouped_unseen:
         return [], deduped_count
 
-    # Sort newest-first with deterministic tie-breaking before same-day dedup & clustering
-    unseen_pairs.sort(
+    unique_today: list[tuple[RawArticle, np.ndarray | None]] = []
+    for copies in grouped_unseen.values():
+        if len(copies) == 1:
+            unique_today.append(copies[0])
+            continue
+
+        # Among copies of the exact same canonical URL, prefer full_text, valid vector, newest ts
+        copies.sort(
+            key=lambda pair: (
+                0 if pair[0].full_text else 1,
+                0 if pair[1] is not None else 1,
+                -_sort_timestamp(pair[0].published_at),
+                pair[0].article_id,
+            )
+        )
+        best_article, best_vec = copies[0]
+        if best_vec is None:
+            for _, candidate_vec in copies[1:]:
+                if candidate_vec is not None:
+                    best_vec = candidate_vec
+                    break
+
+        merged_hints: list[str] = []
+        seen_hints: set[str] = set()
+        for copy_article, _ in copies:
+            for hint in copy_article.topic_hints:
+                cleaned = hint.strip()
+                key = cleaned.lower()
+                if cleaned and key not in seen_hints:
+                    seen_hints.add(key)
+                    merged_hints.append(cleaned)
+
+        if merged_hints != best_article.topic_hints:
+            best_article = best_article.model_copy(update={"topic_hints": merged_hints})
+        unique_today.append((best_article, best_vec))
+
+    # Sort distinct unseen articles strictly newest-first with deterministic tie-breaking
+    unique_today.sort(
         key=lambda pair: (
             -_sort_timestamp(pair[0].published_at),
             pair[0].article_id,
             pair[0].canonical_url,
         )
     )
-
-    unique_today: list[tuple[RawArticle, np.ndarray | None]] = []
-    seen_today_canonical: set[str] = set()
-    for article, unit_vec in unseen_pairs:
-        canonical = normalize_url(article.canonical_url or article.url)
-        if canonical in seen_today_canonical:
-            continue
-        seen_today_canonical.add(canonical)
-        unique_today.append((article, unit_vec))
 
     # Step 2: Greedy same-day centroid clustering
     working_clusters: list[_WorkingCluster] = []
