@@ -1,0 +1,20 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored so project-specific values never enter git.
+
+project_id         = "your-gcp-project-id"
+billing_account_id = "XXXXXX-XXXXXX-XXXXXX" # Optional; leave "" to skip budget alerts
+region             = "us-central1"          # Tier-1 Always Free eligible
+github_repo        = "siddhant-ban/agentic-ai-digest"
+smtp_sender        = "you@gmail.com"
+
+# Daily 12:00 UTC schedule
+schedule_cron     = "0 12 * * *"
+schedule_timezone = "Etc/UTC"
+
+# Vertex AI Gemini models (default: Flash-Lite for low cost)
+research_model  = "gemini-3.1-flash-lite"
+synthesis_model = "gemini-3.1-flash-lite"
+critic_model    = "gemini-3.1-flash-lite"
+
+# Monthly billing alert cap (USD)
+monthly_budget_usd = 10
