@@ -32,7 +32,7 @@ flowchart TD
     VAI["Vertex AI Gemini + Embeddings (IAM Auth)"] <--> S3
     VAI <--> S4
     VAI <--> S5
-    SMTP["Gmail SMTP (TLS 587)"] <-- "HTML + Plain Text" --> S6
+    S6 -->|"HTML + Plain Text"| SMTP["Gmail SMTP (TLS 587)"]
     S8 --> CT["Cloud Trace (Multi-Span Waterfall)"]
     S8 --> CL["Cloud Logging (Trace-Correlated JSON)"]
 ```
@@ -110,7 +110,7 @@ Measured live on the frozen golden corpus (3 recipient profiles + 2 `ResearchAge
 | `trajectory_precision` | `1.0000` | `1.0000` | `1.0000` | `>= 0.8000` |
 | `avg_latency_ms` / case | `11,580.1 ms` | **`9,943.8 ms`** | `61,715.6 ms` | info |
 | `estimated_cost_usd` (suite) | `$0.002782` | **`$0.004113`** | `$0.009338` | info |
-| Judge (`Faith / Rel / Syn / Conc`) | `5.0 / 5.0 / 5.0 / 5.0` | **`5.0 / 5.0 / 5.0 / 5.0`** | `5.0 / 5.0 / 5.0 / 5.0` | `>= 4.0` |
+| Judge (`Faith / Rel / Syn / Conc`) | `5.0 / 5.0 / 5.0 / 5.0` | **`5.0 / 5.0 / 5.0 / 5.0`** | `5.0 / 5.0 / 5.0 / 5.0` | `F >= 4.0` (targets `4.0 / 4.0 / 3.8 / 4.0`) |
 | **Gate Status** | **FAILED** | **PASSED** | **PASSED** | All pass |
 
 ---

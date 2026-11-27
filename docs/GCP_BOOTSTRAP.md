@@ -159,17 +159,25 @@ Run the job manually and stream completion status:
 gcloud run jobs execute agentic-digest-job --region us-central1 --wait
 ```
 
-Inspect structured logs if needed:
+Inspect trace-correlated structured JSON logs (`LOG_FORMAT=json`):
 
 ```powershell
-gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="agentic-digest-job"' --limit 50 --format="value(timestamp,severity,textPayload)"
+gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="agentic-digest-job"' --limit 50 --format="value(timestamp,severity,jsonPayload.message,trace)"
+```
+
+Inspect recorded production run metrics and Cloud Trace IDs directly from Firestore:
+
+```powershell
+$env:GCP_PROJECT_ID = "YOUR_GCP_PROJECT_ID"
+uv run agentic-emailer inspect-runs --backend firestore --limit 10
 ```
 
 Verify in the Google Cloud Console:
 1. **Cloud Run → Jobs → `agentic-digest-job`**: Execution succeeded with exit code `0`.
-2. **Firestore → Data**: `recipients`, `seen_articles`, and `story_clusters` collections are populated.
-3. **Cloud Scheduler**: `daily-agentic-digest` is enabled (`0 12 * * *` UTC).
-4. **Billing → Budgets & alerts**: Monthly $10 budget guardrail is active (if `billing_account_id` was provided).
+2. **Cloud Trace → Trace Explorer**: Complete multi-span waterfall under `digest.run` (`ingestion.rss`, `agent.research`, `memory.embed_and_cluster`, `recipient.editorial_loop`, `delivery.send`, `memory.persist_and_prune`) plus GenAI spans.
+3. **Firestore → Data**: `recipients`, `seen_articles`, `story_clusters`, and `runs` collections are populated.
+4. **Cloud Scheduler**: `daily-agentic-digest` is enabled (`0 12 * * *` UTC).
+5. **Billing → Budgets & alerts**: Monthly $10 budget guardrail is active (if `billing_account_id` was provided).
 
 ---
 
