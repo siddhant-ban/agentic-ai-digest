@@ -30,6 +30,12 @@ class CaseEvalResult(BaseModel):
     url_grounding_rate: float
     duplicate_leakage_rate: float
     topic_coverage_rate: float
+    developing_story_recall: float | None = None
+    expected_developing_stories: int = 0
+    matched_developing_stories: int = 0
+    cluster_compression_ratio: float = 1.0
+    clusters_formed: int = 0
+    unseen_articles_count: int = 0
     revisions: int
     latency_ms: float
     used_fallback: bool = False
@@ -57,6 +63,8 @@ class EvalSummary(BaseModel):
     schema_validity_rate: float
     url_grounding_rate: float
     duplicate_leakage_rate: float
+    developing_story_recall: float = 1.0
+    cluster_compression_ratio: float = 1.0
     topic_coverage_rate: float
     trajectory_precision: float
     avg_revisions: float
@@ -127,17 +135,23 @@ def compute_case_metrics(
     topics: list[str],
     *,
     available_topics: list[str] | None = None,
+    suppressed_urls: set[str] | None = None,
+    expected_developing_article_ids: list[str] | None = None,
+    clusters_formed: int | None = None,
+    clustered_articles_count: int | None = None,
+    active_cluster_urls: set[str] | None = None,
     max_highlights: int | None = None,
     revisions: int = 0,
     latency_ms: float = 0.0,
     used_fallback: bool = False,
     judge: JudgeScorecard | None = None,
 ) -> CaseEvalResult:
-    """Compute deterministic schema, grounding, dedup leakage, and topic coverage metrics."""
+    """Compute deterministic schema, grounding, dedup, developing-story, and clustering metrics."""
+    disallowed_urls = set(seen_urls) | set(suppressed_urls or set())
     verification = verify_digest_draft(
         draft,
         allowed_articles,
-        seen_urls,
+        disallowed_urls,
         topics,
         max_highlights=max_highlights,
     )
@@ -146,7 +160,23 @@ def compute_case_metrics(
     allowed_canon = {a.canonical_url.strip() for a in allowed_articles} | {
         normalize_url(a.url) for a in allowed_articles
     }
-    normalized_seen = normalize_seen_urls(seen_urls)
+    normalized_seen_exact = normalize_seen_urls(seen_urls)
+    normalized_disallowed = normalize_seen_urls(disallowed_urls)
+
+    unseen_articles = [
+        a
+        for a in allowed_articles
+        if a.canonical_url not in normalized_seen_exact
+        and normalize_url(a.url) not in normalized_seen_exact
+        and a.url not in normalized_seen_exact
+    ]
+    unseen_non_suppressed = [
+        a
+        for a in unseen_articles
+        if a.canonical_url not in normalized_disallowed
+        and normalize_url(a.url) not in normalized_disallowed
+        and a.url not in normalized_disallowed
+    ]
 
     total_citations = 0
     grounded_citations = 0
@@ -160,25 +190,31 @@ def compute_case_metrics(
             norm_u = normalize_url(raw_u)
             if _is_valid_http_url(raw_u) and (raw_u in allowed_raw or norm_u in allowed_canon):
                 grounded_citations += 1
-            is_stale = raw_u in normalized_seen or norm_u in normalized_seen
+            is_stale_or_rehash = raw_u in normalized_disallowed or norm_u in normalized_disallowed
             is_dup = norm_u in seen_in_digest
-            if is_stale or is_dup:
+            if is_stale_or_rehash or is_dup:
                 leaked_citations += 1
             seen_in_digest.add(norm_u)
 
+    verification_errors = list(verification.errors)
+    leaked_suppressed_clusters = 0
+    if active_cluster_urls is not None and suppressed_urls:
+        normalized_active = normalize_seen_urls(active_cluster_urls)
+        for sup_url in sorted(normalize_seen_urls(suppressed_urls)):
+            if sup_url in normalized_active:
+                leaked_suppressed_clusters += 1
+                verification_errors.append(
+                    f"Expected suppressed near-duplicate URL survived Stage 4 clustering: {sup_url}"
+                )
+
     if total_citations == 0:
-        unseen_articles = [
-            a
-            for a in allowed_articles
-            if a.canonical_url not in normalized_seen
-            and normalize_url(a.url) not in normalized_seen
-            and a.url not in normalized_seen
-        ]
-        url_grounding_rate = 1.0 if not unseen_articles else 0.0
-        duplicate_leakage_rate = 0.0
+        url_grounding_rate = 1.0 if not unseen_non_suppressed else 0.0
+        duplicate_leakage_rate = 1.0 if leaked_suppressed_clusters > 0 else 0.0
     else:
         url_grounding_rate = round(grounded_citations / total_citations, 4)
-        duplicate_leakage_rate = round(leaked_citations / total_citations, 4)
+        total_leak_checks = total_citations + leaked_suppressed_clusters
+        total_leaks = leaked_citations + leaked_suppressed_clusters
+        duplicate_leakage_rate = round(total_leaks / total_leak_checks, 4)
 
     # Topic coverage over recipient topics that actually have available unseen articles
     target_topics = available_topics if available_topics is not None else topics
@@ -195,16 +231,62 @@ def compute_case_metrics(
                 covered += 1
         topic_coverage_rate = round(covered / len(target_topics), 4)
 
+    # Developing storyline recall: % of planted follow-ups flagged `developing_update`
+    expected_dev_ids = [
+        aid.strip() for aid in (expected_developing_article_ids or []) if aid.strip()
+    ]
+    expected_dev_count = len(expected_dev_ids)
+    matched_dev_count = 0
+    developing_story_recall: float | None = None
+
+    if expected_dev_count > 0:
+        article_by_id = {a.article_id: a for a in allowed_articles}
+        developing_cited_ids: set[str] = set()
+        developing_cited_urls: set[str] = set()
+        for highlight in draft.highlights:
+            if highlight.story_status != "developing_update":
+                continue
+            for cit in highlight.citations:
+                developing_cited_ids.add(cit.article_id.strip())
+                developing_cited_urls.add(normalize_url(cit.url))
+
+        for expected_id in expected_dev_ids:
+            art = article_by_id.get(expected_id)
+            expected_canon = normalize_url(art.canonical_url or art.url) if art is not None else ""
+            if expected_id in developing_cited_ids or (
+                expected_canon and expected_canon in developing_cited_urls
+            ):
+                matched_dev_count += 1
+        developing_story_recall = round(matched_dev_count / expected_dev_count, 4)
+
+    # Cluster compression ratio: active clustered articles / clusters formed (>= 1.0),
+    # excluding cross-day suppressed duplicates so clustering compression stays pure.
+    effective_article_count = (
+        clustered_articles_count
+        if clustered_articles_count is not None
+        else len(unseen_non_suppressed)
+    )
+    effective_clusters = clusters_formed if clusters_formed is not None else effective_article_count
+    cluster_compression_ratio = (
+        round(effective_article_count / effective_clusters, 4) if effective_clusters > 0 else 1.0
+    )
+
     return CaseEvalResult(
         case_id=case_id,
         schema_valid=verification.passed,
         url_grounding_rate=url_grounding_rate,
         duplicate_leakage_rate=duplicate_leakage_rate,
         topic_coverage_rate=topic_coverage_rate,
+        developing_story_recall=developing_story_recall,
+        expected_developing_stories=expected_dev_count,
+        matched_developing_stories=matched_dev_count,
+        cluster_compression_ratio=cluster_compression_ratio,
+        clusters_formed=effective_clusters,
+        unseen_articles_count=effective_article_count,
         revisions=revisions,
         latency_ms=round(latency_ms, 1),
         used_fallback=used_fallback,
-        verification_errors=verification.errors,
+        verification_errors=verification_errors,
         judge=judge,
         draft=draft,
     )
@@ -288,6 +370,18 @@ def aggregate_metrics(
     avg_revisions = round(sum(c.revisions for c in cases) / n, 2) if n else 0.0
     avg_latency_ms = round(sum(c.latency_ms for c in cases) / n, 1) if n else 0.0
 
+    total_expected_dev = sum(c.expected_developing_stories for c in cases)
+    total_matched_dev = sum(c.matched_developing_stories for c in cases)
+    developing_story_recall = (
+        round(total_matched_dev / total_expected_dev, 4) if total_expected_dev > 0 else 1.0
+    )
+
+    total_unseen = sum(c.unseen_articles_count for c in cases)
+    total_clusters = sum(c.clusters_formed for c in cases)
+    cluster_compression_ratio = (
+        round(total_unseen / total_clusters, 4) if total_clusters > 0 else 1.0
+    )
+
     t_n = len(trajectories)
     trajectory_precision = (
         round(sum(t.trajectory_precision for t in trajectories) / t_n, 4) if t_n else 1.0
@@ -308,6 +402,8 @@ def aggregate_metrics(
         schema_validity_rate=schema_validity_rate,
         url_grounding_rate=url_grounding_rate,
         duplicate_leakage_rate=duplicate_leakage_rate,
+        developing_story_recall=developing_story_recall,
+        cluster_compression_ratio=cluster_compression_ratio,
         topic_coverage_rate=topic_coverage_rate,
         trajectory_precision=trajectory_precision,
         avg_revisions=avg_revisions,

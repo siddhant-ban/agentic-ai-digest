@@ -120,6 +120,7 @@ class StoryCluster(BaseModel):
     canonical_title: str = Field(min_length=1)
     topic: str = "General"
     articles: list[RawArticle] = Field(default_factory=list)
+    summary: str | None = None
     embedding: list[float] | None = None
     is_developing_story: bool = False
     prior_story_summary: str | None = None

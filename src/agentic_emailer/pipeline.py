@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -33,6 +34,13 @@ from agentic_emailer.ingestion.rss import (
     normalize_seen_urls,
     normalize_url,
     within_lookback,
+)
+from agentic_emailer.memory import (
+    MemoryStore,
+    build_article_embedding_text,
+    cluster_and_link_stories,
+    create_memory_store,
+    embed_texts,
 )
 from agentic_emailer.models import (
     CriticVerdict,
@@ -105,8 +113,11 @@ def _parse_recipient_dict(
     raw: dict[str, Any],
     global_config: dict[str, Any],
     default_id: str,
+    *,
+    include_disabled: bool = False,
 ) -> RecipientProfile | None:
-    if raw.get("enabled") is False:
+    is_enabled = raw.get("enabled") is not False
+    if not is_enabled and not include_disabled:
         logger.info("Skipping disabled recipient profile: %s", raw.get("id") or default_id)
         return None
 
@@ -159,7 +170,7 @@ def _parse_recipient_dict(
             id=profile_id,
             email_address=str(recipient_email),
             subject_prefix=str(subject_prefix),
-            enabled=True,
+            enabled=is_enabled,
             topics=topics_list,
             rss_feeds=rss_feeds,
             lookback_hours=lookback_hours,
@@ -168,6 +179,54 @@ def _parse_recipient_dict(
     except Exception as exc:
         logger.warning("Invalid recipient profile %s: %s", profile_id, exc)
         return None
+
+
+def _filter_profiles_by_recipient(
+    profiles: list[RecipientProfile],
+    recipient_filter: str | None,
+) -> list[RecipientProfile]:
+    if not recipient_filter:
+        return list(profiles)
+    target = recipient_filter.strip().lower()
+    return [
+        p
+        for p in profiles
+        if p.id.lower() == target or p.email_address.lower() == target
+    ]
+
+
+def load_profiles_from_file(
+    profiles_path: Path,
+    global_config: dict[str, Any] | None = None,
+    *,
+    include_disabled: bool = False,
+) -> list[RecipientProfile]:
+    """Load and validate RecipientProfiles from a JSON file (list or single object)."""
+    data = json.loads(profiles_path.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = [data]
+    else:
+        raise ValueError(
+            f"Expected JSON list or object in {profiles_path}, got {type(data).__name__}"
+        )
+
+    cfg = global_config or {}
+    profiles: list[RecipientProfile] = []
+    for idx, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            logger.warning("Skipping non-object profile entry #%d in %s", idx, profiles_path)
+            continue
+        profile = _parse_recipient_dict(
+            item,
+            cfg,
+            f"profile_{idx}",
+            include_disabled=include_disabled,
+        )
+        if profile is not None:
+            profiles.append(profile)
+    return profiles
 
 
 def discover_recipient_profiles(
@@ -243,15 +302,7 @@ def discover_recipient_profiles(
             if profile is not None:
                 profiles.append(profile)
 
-    if recipient_filter:
-        target = recipient_filter.strip().lower()
-        profiles = [
-            p
-            for p in profiles
-            if p.id.lower() == target or p.email_address.lower() == target
-        ]
-
-    return profiles
+    return _filter_profiles_by_recipient(profiles, recipient_filter)
 
 
 def build_singleton_clusters(articles: list[RawArticle]) -> list[StoryCluster]:
@@ -697,6 +748,82 @@ def _merge_config_into_settings(settings: Settings, global_config: dict[str, Any
     return settings.model_copy(update=updates) if updates else settings
 
 
+def _collect_sent_articles_and_clusters(
+    draft: DigestDraft,
+    recipient_clusters: list[StoryCluster],
+    clusters_by_id: dict[str, StoryCluster],
+) -> tuple[list[RawArticle], dict[str, str], dict[str, StoryCluster]]:
+    """Map delivered digest citations back to source articles and clusters for persistence."""
+    article_to_cluster_id: dict[str, str] = {}
+    url_to_article: dict[str, RawArticle] = {}
+    id_to_article: dict[str, RawArticle] = {}
+
+    for cluster in recipient_clusters:
+        full_cluster = clusters_by_id.get(cluster.cluster_id, cluster)
+        for article in full_cluster.articles:
+            article_to_cluster_id[article.article_id] = full_cluster.cluster_id
+            id_to_article[article.article_id] = article
+            url_to_article[normalize_url(article.canonical_url or article.url)] = article
+            url_to_article[normalize_url(article.url)] = article
+
+    sent_articles_by_id: dict[str, RawArticle] = {}
+    cluster_ids_for_articles: dict[str, str] = {}
+    saved_clusters: dict[str, StoryCluster] = {}
+
+    for highlight in draft.highlights:
+        matched_cluster_ids: set[str] = set()
+        for citation in highlight.citations:
+            matched_article = id_to_article.get(citation.article_id)
+            if matched_article is None:
+                matched_article = url_to_article.get(normalize_url(citation.url))
+            if matched_article is None:
+                continue
+
+            sent_articles_by_id[matched_article.article_id] = matched_article
+            cid = article_to_cluster_id.get(matched_article.article_id, "")
+            if cid:
+                cluster_ids_for_articles[matched_article.article_id] = cid
+                matched_cluster_ids.add(cid)
+
+        for cid in matched_cluster_ids:
+            matched_cluster = clusters_by_id.get(cid)
+            if matched_cluster is None:
+                continue
+            for sibling in matched_cluster.articles:
+                sent_articles_by_id[sibling.article_id] = sibling
+                cluster_ids_for_articles[sibling.article_id] = cid
+            if cid not in saved_clusters:
+                saved_clusters[cid] = matched_cluster.model_copy(
+                    update={"summary": highlight.summary.strip()}
+                )
+
+    return list(sent_articles_by_id.values()), cluster_ids_for_articles, saved_clusters
+
+
+async def close_memory_store(store: MemoryStore) -> None:
+    """Close a MemoryStore asynchronously if it defines `aclose()`, else synchronously."""
+    aclose_fn = getattr(store, "aclose", None)
+    if callable(aclose_fn):
+        result = aclose_fn()
+        if inspect.isawaitable(result):
+            await result
+        return
+    close_fn = getattr(store, "close", None)
+    if callable(close_fn):
+        close_fn()
+
+
+def _article_sort_timestamp(article: RawArticle) -> float:
+    if article.published_at is None:
+        return float("-inf")
+    dt = (
+        article.published_at.replace(tzinfo=UTC)
+        if article.published_at.tzinfo is None
+        else article.published_at.astimezone(UTC)
+    )
+    return dt.timestamp()
+
+
 async def run_digest_pipeline(
     *,
     settings: Settings | None = None,
@@ -707,6 +834,7 @@ async def run_digest_pipeline(
     profiles: list[RecipientProfile] | None = None,
     email_sender: EmailSender | None = None,
     seen_urls: set[str] | None = None,
+    memory_store: MemoryStore | None = None,
 ) -> tuple[list[tuple[RecipientProfile, DigestDraft, DeliveryReceipt]], RunMetrics]:
     """Execute the end-to-end async multi-agent digest pipeline."""
     run_id = uuid.uuid4().hex[:12]
@@ -720,193 +848,365 @@ async def run_digest_pipeline(
         base_dir = config_path.resolve().parent if config_path is not None else Path.cwd()
         effective_settings.apply_genai_env(base_dir=base_dir)
 
-    active_profiles = (
-        profiles
-        if profiles is not None
-        else discover_recipient_profiles(config_path, global_config, recipient_filter)
-    )
+    store = memory_store if memory_store is not None else create_memory_store(effective_settings)
+    owns_store = memory_store is None
 
-    budget = RunBudgetTracker(
-        max_llm_calls=effective_settings.max_llm_calls_per_run,
-        max_total_tokens=effective_settings.max_total_tokens_per_run,
-        max_scrapes=effective_settings.max_article_scrapes_per_run,
-        max_searches=effective_settings.max_search_calls_per_run,
-    )
+    try:
+        # Stage 1: Load active recipient profiles and cross-day memory upfront
+        if profiles is not None:
+            active_profiles = _filter_profiles_by_recipient(profiles, recipient_filter)
+        else:
+            store_profiles = await store.load_active_profiles()
+            if store_profiles:
+                active_profiles = _filter_profiles_by_recipient(store_profiles, recipient_filter)
+                logger.info(
+                    "Stage 1: Loaded %d active profile(s) from %s",
+                    len(active_profiles),
+                    type(store).__name__,
+                )
+            else:
+                active_profiles = discover_recipient_profiles(
+                    config_path, global_config, recipient_filter
+                )
+                logger.info(
+                    "Stage 1: Memory store has 0 active profiles; loaded %d from local config",
+                    len(active_profiles),
+                )
 
-    if not active_profiles:
-        logger.warning("No active recipient profiles found to process.")
+        budget = RunBudgetTracker(
+            max_llm_calls=effective_settings.max_llm_calls_per_run,
+            max_total_tokens=effective_settings.max_total_tokens_per_run,
+            max_scrapes=effective_settings.max_article_scrapes_per_run,
+            max_searches=effective_settings.max_search_calls_per_run,
+        )
+
+        if not active_profiles:
+            logger.warning("No active recipient profiles found to process.")
+            metrics = RunMetrics(
+                run_id=run_id,
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+            )
+            return [], metrics
+
+        stored_seen_urls = await store.get_seen_urls(
+            since_days=effective_settings.seen_url_window_days
+        )
+        prior_clusters = await store.get_recent_clusters(
+            since_days=effective_settings.storyline_window_days
+        )
+        active_seen_urls = normalize_seen_urls(stored_seen_urls | set(seen_urls or set()))
+        logger.info(
+            "Stage 1 memory loaded: %d seen URL(s) (%dd), %d prior cluster(s) (%dd)",
+            len(active_seen_urls),
+            effective_settings.seen_url_window_days,
+            len(prior_clusters),
+            effective_settings.storyline_window_days,
+        )
+
+        # Stage 2: Pool unique RSS feeds and target topics across active recipients
+        pooled_feeds: list[RssFeedConfig] = []
+        feed_url_to_source: dict[str, str] = {}
+        pooled_topics: list[str] = []
+        seen_topics_lower: set[str] = set()
+
+        for profile in active_profiles:
+            for topic in profile.topics:
+                key = topic.strip().lower()
+                if key and key not in seen_topics_lower:
+                    seen_topics_lower.add(key)
+                    pooled_topics.append(topic.strip())
+            for feed in profile.rss_feeds:
+                norm_feed_url = normalize_url(feed.url)
+                if norm_feed_url not in feed_url_to_source:
+                    feed_url_to_source[norm_feed_url] = feed.name
+                    pooled_feeds.append(feed)
+
+        max_lookback = max((p.lookback_hours for p in active_profiles), default=36)
+        max_per_feed = int(global_config.get("max_articles_per_source") or 15)
+
+        logger.info(
+            "Stage 2: Fetching %d unique RSS feed(s) for %d active recipient(s)",
+            len(pooled_feeds),
+            len(active_profiles),
+        )
+        rss_articles = await fetch_rss_feeds(
+            pooled_feeds,
+            lookback_hours=max_lookback,
+            max_per_feed=max_per_feed,
+        )
+        logger.info("Stage 2 complete: %d unique RSS article(s) gathered", len(rss_articles))
+
+        # Stage 3: Adaptive ADK ResearchAgent (skipped on --gather-only)
+        if gather_only:
+            all_articles = rss_articles
+        else:
+            logger.info(
+                "Stage 3: Running ADK ResearchAgent across %d topic(s)", len(pooled_topics)
+            )
+            all_articles, _ = await run_research_stage(
+                rss_articles,
+                pooled_topics,
+                max_lookback,
+                effective_settings,
+                budget,
+                seen_urls=active_seen_urls,
+            )
+
+        # Stage 4: Pre-filter exact seen URLs (avoid embedding already-sent URLs) and coalesce
+        # same-day URL duplicates (preferring full_text and preserving merged topic_hints).
+        grouped_unseen: dict[str, list[RawArticle]] = {}
+        counted_seen_canonical: set[str] = set()
+        exact_seen_deduped = 0
+
+        for article in all_articles:
+            canon = normalize_url(article.canonical_url or article.url)
+            raw_norm = normalize_url(article.url)
+            if (
+                canon in active_seen_urls
+                or raw_norm in active_seen_urls
+                or article.url in active_seen_urls
+            ):
+                if canon not in counted_seen_canonical:
+                    counted_seen_canonical.add(canon)
+                    exact_seen_deduped += 1
+                continue
+            grouped_unseen.setdefault(canon, []).append(article)
+
+        unseen_candidates: list[RawArticle] = []
+        for copies in grouped_unseen.values():
+            if len(copies) == 1:
+                unseen_candidates.append(copies[0])
+                continue
+            copies.sort(
+                key=lambda a: (
+                    0 if a.full_text else 1,
+                    -_article_sort_timestamp(a),
+                    a.article_id,
+                )
+            )
+            winner = copies[0]
+            merged_hints: list[str] = []
+            seen_hints: set[str] = set()
+            for copy_art in copies:
+                for hint in copy_art.topic_hints:
+                    cleaned = hint.strip()
+                    key = cleaned.lower()
+                    if cleaned and key not in seen_hints:
+                        seen_hints.add(key)
+                        merged_hints.append(cleaned)
+            if merged_hints != winner.topic_hints:
+                winner = winner.model_copy(update={"topic_hints": merged_hints})
+            unseen_candidates.append(winner)
+
+        unseen_candidates.sort(
+            key=lambda a: (-_article_sort_timestamp(a), a.article_id, a.canonical_url)
+        )
+
+        articles_deduped_cross_day = exact_seen_deduped
+        if gather_only or not unseen_candidates:
+            clusters = build_singleton_clusters(unseen_candidates)
+        else:
+            try:
+                embed_inputs = [
+                    build_article_embedding_text(article) for article in unseen_candidates
+                ]
+                embeddings = await embed_texts(embed_inputs, effective_settings, budget)
+                clusters, semantic_deduped = cluster_and_link_stories(
+                    unseen_candidates,
+                    embeddings,
+                    active_seen_urls,
+                    prior_clusters,
+                    merge_threshold=effective_settings.cluster_merge_threshold,
+                    storyline_threshold=effective_settings.storyline_link_threshold,
+                    semantic_dedup_threshold=effective_settings.semantic_dedup_threshold,
+                )
+                articles_deduped_cross_day += semantic_deduped
+            except Exception as exc:
+                logger.warning(
+                    "Stage 4 embeddings/clustering failed (%s); falling back to singleton clusters",
+                    exc,
+                )
+                clusters = build_singleton_clusters(unseen_candidates)
+
+        developing_stories_linked = sum(1 for cluster in clusters if cluster.is_developing_story)
+        logger.info(
+            "Stage 4 complete: %d candidate(s) -> %d cluster(s), %d cross-day deduped, "
+            "%d developing story link(s)",
+            len(unseen_candidates),
+            len(clusters),
+            articles_deduped_cross_day,
+            developing_stories_linked,
+        )
+
+        clusters_by_id = {cluster.cluster_id: cluster for cluster in clusters}
+
+        # Prepare EmailSender lazily only when real delivery is required
+        sender_instance: EmailSender | None = email_sender
+        if sender_instance is None and not dry_run and not gather_only:
+            base_dir = config_path.resolve().parent if config_path is not None else Path.cwd()
+            smtp_password = effective_settings.resolve_email_password(base_dir=base_dir) or ""
+            sender_instance = SmtpEmailSender(
+                host=effective_settings.smtp_host,
+                port=effective_settings.smtp_port,
+                sender=effective_settings.smtp_sender,
+                password=smtp_password,
+            )
+
+        # Stage 5: Per-recipient isolated editorial loop & delivery
+        results: list[tuple[RecipientProfile, DigestDraft, DeliveryReceipt]] = []
+        clusters_to_save: dict[str, StoryCluster] = {}
+        recipients_failed = 0
+        total_revisions = 0
+        grounding_passes = 0
+
+        for profile in active_profiles:
+            try:
+                recipient_clusters = filter_clusters_for_recipient(
+                    clusters,
+                    profile,
+                    feed_url_to_source=feed_url_to_source,
+                )
+                recipient_articles = [a for c in recipient_clusters for a in c.articles]
+
+                if gather_only:
+                    header = f"=== Recipient: {profile.email_address} ({profile.id}) ==="
+                    safe_print(f"{header}\n{_format_articles_for_console(recipient_articles)}")
+                    draft = build_fallback_draft(
+                        recipient_articles, profile.topics, max_highlights=profile.max_highlights
+                    )
+                    receipt = DeliveryReceipt(
+                        recipient_id=profile.id,
+                        recipient_email=profile.email_address,
+                        status="dry_run",
+                        provider="gather_only",
+                    )
+                    results.append((profile, draft, receipt))
+                    grounding_passes += 1
+                    continue
+
+                editorial = await run_editorial_loop(
+                    profile,
+                    recipient_clusters,
+                    active_seen_urls,
+                    effective_settings,
+                    budget,
+                )
+                total_revisions += editorial.revisions
+                if editorial.verification.passed:
+                    grounding_passes += 1
+
+                subject = render_subject(profile, editorial.draft)
+                plain_text = render_plain_text(editorial.draft)
+                html_body = render_html(editorial.draft)
+
+                if dry_run:
+                    header = f"=== Recipient: {profile.email_address} ({profile.id}) ==="
+                    safe_print(f"{header}\nSubject: {subject}\n\n{plain_text}")
+                    receipt = DeliveryReceipt(
+                        recipient_id=profile.id,
+                        recipient_email=profile.email_address,
+                        status="dry_run",
+                        provider="dry_run",
+                    )
+                else:
+                    assert sender_instance is not None
+                    receipt = await asyncio.to_thread(
+                        sender_instance.send,
+                        profile,
+                        subject,
+                        plain_text,
+                        html_body,
+                    )
+                    if receipt.status == "failed":
+                        recipients_failed += 1
+                    elif receipt.status == "sent":
+                        sent_articles, cluster_id_map, matched_clusters = (
+                            _collect_sent_articles_and_clusters(
+                                editorial.draft,
+                                recipient_clusters,
+                                clusters_by_id,
+                            )
+                        )
+                        if sent_articles:
+                            try:
+                                await store.record_sent_articles(
+                                    sent_articles, profile.id, cluster_id_map
+                                )
+                            except Exception as exc:
+                                logger.exception(
+                                    "Failed to record sent articles for %s: %s", profile.id, exc
+                                )
+                        for cid, saved_cluster in matched_clusters.items():
+                            if cid not in clusters_to_save:
+                                clusters_to_save[cid] = saved_cluster
+
+                results.append((profile, editorial.draft, receipt))
+            except Exception as exc:
+                recipients_failed += 1
+                logger.exception(
+                    "Recipient %s (%s) failed: %s", profile.id, profile.email_address, exc
+                )
+                failed_draft = build_fallback_draft([], profile.topics)
+                failed_receipt = DeliveryReceipt(
+                    recipient_id=profile.id,
+                    recipient_email=profile.email_address,
+                    status="failed",
+                    provider="pipeline_error",
+                    error=str(exc),
+                )
+                results.append((profile, failed_draft, failed_receipt))
+
+        processed = len(active_profiles)
         metrics = RunMetrics(
             run_id=run_id,
             started_at=started_at,
             finished_at=datetime.now(UTC),
-        )
-        return [], metrics
-
-    # Stage 2: Pool unique RSS feeds and target topics across active recipients
-    pooled_feeds: list[RssFeedConfig] = []
-    feed_url_to_source: dict[str, str] = {}
-    pooled_topics: list[str] = []
-    seen_topics_lower: set[str] = set()
-
-    for profile in active_profiles:
-        for topic in profile.topics:
-            key = topic.strip().lower()
-            if key and key not in seen_topics_lower:
-                seen_topics_lower.add(key)
-                pooled_topics.append(topic.strip())
-        for feed in profile.rss_feeds:
-            norm_feed_url = normalize_url(feed.url)
-            if norm_feed_url not in feed_url_to_source:
-                feed_url_to_source[norm_feed_url] = feed.name
-                pooled_feeds.append(feed)
-
-    max_lookback = max((p.lookback_hours for p in active_profiles), default=36)
-    max_per_feed = int(global_config.get("max_articles_per_source") or 15)
-
-    logger.info(
-        "Stage 2: Fetching %d unique RSS feed(s) for %d active recipient(s)",
-        len(pooled_feeds),
-        len(active_profiles),
-    )
-    rss_articles = await fetch_rss_feeds(
-        pooled_feeds,
-        lookback_hours=max_lookback,
-        max_per_feed=max_per_feed,
-    )
-    logger.info("Stage 2 complete: %d unique RSS article(s) gathered", len(rss_articles))
-
-    active_seen_urls = set(seen_urls or set())
-
-    # Stage 3: Adaptive ADK ResearchAgent (skipped on --gather-only)
-    if gather_only:
-        all_articles = rss_articles
-    else:
-        logger.info("Stage 3: Running ADK ResearchAgent across %d topic(s)", len(pooled_topics))
-        all_articles, _ = await run_research_stage(
-            rss_articles,
-            pooled_topics,
-            max_lookback,
-            effective_settings,
-            budget,
-            seen_urls=active_seen_urls,
+            recipients_processed=processed,
+            recipients_failed=recipients_failed,
+            articles_gathered=len(all_articles),
+            articles_deduped_cross_day=articles_deduped_cross_day,
+            clusters_formed=len(clusters),
+            developing_stories_linked=developing_stories_linked,
+            scrapes_performed=budget.scrape_calls,
+            llm_calls=budget.llm_calls,
+            input_tokens=budget.input_tokens,
+            output_tokens=budget.output_tokens,
+            estimated_cost_usd=budget.estimated_cost_usd(effective_settings.synthesis_model),
+            avg_revisions_per_recipient=(
+                round(total_revisions / processed, 2) if processed else 0.0
+            ),
+            deterministic_grounding_pass_rate=(
+                round(grounding_passes / processed, 4) if processed else 1.0
+            ),
+            trace_id=None,
         )
 
-    # Stage 4: Build 1-to-1 StoryClusters (Milestone 2 plugs semantic clustering here)
-    clusters = build_singleton_clusters(all_articles)
-
-    # Prepare EmailSender lazily only when real delivery is required
-    sender_instance: EmailSender | None = email_sender
-    if sender_instance is None and not dry_run and not gather_only:
-        base_dir = config_path.resolve().parent if config_path is not None else Path.cwd()
-        smtp_password = effective_settings.resolve_email_password(base_dir=base_dir) or ""
-        sender_instance = SmtpEmailSender(
-            host=effective_settings.smtp_host,
-            port=effective_settings.smtp_port,
-            sender=effective_settings.smtp_sender,
-            password=smtp_password,
-        )
-
-    # Stage 5: Per-recipient isolated editorial loop & delivery
-    results: list[tuple[RecipientProfile, DigestDraft, DeliveryReceipt]] = []
-    recipients_failed = 0
-    total_revisions = 0
-    grounding_passes = 0
-
-    for profile in active_profiles:
-        try:
-            recipient_clusters = filter_clusters_for_recipient(
-                clusters,
-                profile,
-                feed_url_to_source=feed_url_to_source,
-            )
-            recipient_articles = [a for c in recipient_clusters for a in c.articles]
-
-            if gather_only:
-                header = f"=== Recipient: {profile.email_address} ({profile.id}) ==="
-                safe_print(f"{header}\n{_format_articles_for_console(recipient_articles)}")
-                draft = build_fallback_draft(
-                    recipient_articles, profile.topics, max_highlights=profile.max_highlights
+        # Stage 7: Persist story clusters, RunMetrics, and run programmatic 30-day pruning
+        if not dry_run and not gather_only:
+            if clusters_to_save:
+                try:
+                    await store.save_story_clusters(list(clusters_to_save.values()))
+                except Exception as exc:
+                    logger.exception("Failed to save story clusters: %s", exc)
+            try:
+                await store.save_run_metrics(metrics)
+            except Exception as exc:
+                logger.exception("Failed to save run metrics: %s", exc)
+            try:
+                pruned = await store.prune_expired(
+                    retention_days=effective_settings.memory_retention_days
                 )
-                receipt = DeliveryReceipt(
-                    recipient_id=profile.id,
-                    recipient_email=profile.email_address,
-                    status="dry_run",
-                    provider="gather_only",
-                )
-                results.append((profile, draft, receipt))
-                grounding_passes += 1
-                continue
+                if pruned:
+                    logger.info(
+                        "Stage 7: Pruned %d expired memory record(s) older than %d days",
+                        pruned,
+                        effective_settings.memory_retention_days,
+                    )
+            except Exception as exc:
+                logger.exception("Failed to prune expired memory records: %s", exc)
 
-            editorial = await run_editorial_loop(
-                profile,
-                recipient_clusters,
-                active_seen_urls,
-                effective_settings,
-                budget,
-            )
-            total_revisions += editorial.revisions
-            if editorial.verification.passed:
-                grounding_passes += 1
-
-            subject = render_subject(profile, editorial.draft)
-            plain_text = render_plain_text(editorial.draft)
-            html_body = render_html(editorial.draft)
-
-            if dry_run:
-                header = f"=== Recipient: {profile.email_address} ({profile.id}) ==="
-                safe_print(f"{header}\nSubject: {subject}\n\n{plain_text}")
-                receipt = DeliveryReceipt(
-                    recipient_id=profile.id,
-                    recipient_email=profile.email_address,
-                    status="dry_run",
-                    provider="dry_run",
-                )
-            else:
-                assert sender_instance is not None
-                receipt = await asyncio.to_thread(
-                    sender_instance.send,
-                    profile,
-                    subject,
-                    plain_text,
-                    html_body,
-                )
-                if receipt.status == "failed":
-                    recipients_failed += 1
-
-            results.append((profile, editorial.draft, receipt))
-        except Exception as exc:
-            recipients_failed += 1
-            logger.exception("Recipient %s (%s) failed: %s", profile.id, profile.email_address, exc)
-            failed_draft = build_fallback_draft([], profile.topics)
-            failed_receipt = DeliveryReceipt(
-                recipient_id=profile.id,
-                recipient_email=profile.email_address,
-                status="failed",
-                provider="pipeline_error",
-                error=str(exc),
-            )
-            results.append((profile, failed_draft, failed_receipt))
-
-    processed = len(active_profiles)
-    metrics = RunMetrics(
-        run_id=run_id,
-        started_at=started_at,
-        finished_at=datetime.now(UTC),
-        recipients_processed=processed,
-        recipients_failed=recipients_failed,
-        articles_gathered=len(all_articles),
-        articles_deduped_cross_day=0,
-        clusters_formed=len(clusters),
-        developing_stories_linked=0,
-        scrapes_performed=budget.scrape_calls,
-        llm_calls=budget.llm_calls,
-        input_tokens=budget.input_tokens,
-        output_tokens=budget.output_tokens,
-        estimated_cost_usd=budget.estimated_cost_usd(effective_settings.synthesis_model),
-        avg_revisions_per_recipient=round(total_revisions / processed, 2) if processed else 0.0,
-        deterministic_grounding_pass_rate=(
-            round(grounding_passes / processed, 4) if processed else 1.0
-        ),
-        trace_id=None,
-    )
-    return results, metrics
+        return results, metrics
+    finally:
+        if owns_store:
+            await close_memory_store(store)

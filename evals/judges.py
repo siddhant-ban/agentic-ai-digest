@@ -11,7 +11,7 @@ from google.genai import types
 
 from agentic_emailer.agents.runtime import parse_structured_output
 from agentic_emailer.budget import RunBudgetTracker
-from agentic_emailer.models import DigestDraft, RawArticle
+from agentic_emailer.models import DigestDraft, RawArticle, StoryCluster
 from evals.metrics import JudgeScorecard
 
 logger = logging.getLogger(__name__)
@@ -23,15 +23,17 @@ executive news digest strictly against its frozen input source articles.
 
 Score each dimension from 1 (very poor) to 5 (excellent):
 - faithfulness (1-5): Is EVERY factual claim, number, entity, and `why_it_matters` takeaway
-  strictly supported by the provided input articles with zero hallucinated facts or unsupported
-  extrapolations? (5 = 100% grounded; 4 = grounded with negligible synthesis phrasing;
-  <= 3 = contains unsupported claims or factual distortion.)
+  strictly supported by the provided input articles (and any provided PRIOR COVERAGE CONTEXT for
+  developing stories) with zero hallucinated facts or unsupported extrapolations? (5 = 100%
+  grounded; 4 = grounded with negligible synthesis phrasing; <= 3 = contains unsupported claims or
+  factual distortion.)
 - relevance (1-5): Do highlights match the recipient's target topics without off-topic noise
   or stale/disallowed articles? On a sparse day with only 1-2 relevant articles, covering only
   what exists without hallucinating earns 5.
 - synthesis_quality (1-5): Does the digest synthesize multi-outlet stories smoothly (merging
-  duplicate coverage rather than repeating the same story twice) and articulate genuine
-  significance instead of merely copy-pasting headlines?
+  duplicate coverage rather than repeating the same story twice), properly frame developing
+  updates against prior coverage when provided, and articulate genuine significance instead of
+  merely copy-pasting headlines?
 - conciseness (1-5): Is the digest crisp, scannable, and well-structured for a 2-minute morning
   executive read?
 
@@ -47,6 +49,7 @@ async def evaluate_digest_with_judge(
     *,
     model: str,
     budget: RunBudgetTracker,
+    clusters: list[StoryCluster] | None = None,
 ) -> JudgeScorecard:
     """Grade a candidate DigestDraft against its frozen source corpus using Gemini."""
     budget.assert_can_call_llm()
@@ -56,13 +59,30 @@ async def evaluate_digest_with_judge(
     seen_block = "\n".join(f"- {u}" for u in sorted(seen_urls)) if seen_urls else "(none)"
     draft_json = draft.model_dump_json(indent=2)
 
+    prior_lines: list[str] = []
+    for cluster in clusters or []:
+        if cluster.is_developing_story and cluster.prior_story_summary:
+            prior_date = cluster.prior_digest_date or "prior digest"
+            prior_lines.append(
+                f"- [{cluster.canonical_title}] Prior Coverage ({prior_date}): "
+                f"{cluster.prior_story_summary}"
+            )
+    prior_section = ""
+    if prior_lines:
+        prior_section = (
+            "PRIOR COVERAGE CONTEXT (VALID GROUNDING FOR DEVELOPING STORIES):\n"
+            + "\n".join(prior_lines)
+            + "\n\n"
+        )
+
     prompt = (
         f"RECIPIENT TARGET TOPICS:\n{topic_lines}\n\n"
         f"DISALLOWED / ALREADY-SEEN URLs:\n{seen_block}\n\n"
+        f"{prior_section}"
         f"FROZEN INPUT SOURCE ARTICLES ({len(articles)} total):\n\n{article_blocks}\n\n"
         f"GENERATED DIGEST DRAFT (JSON):\n{draft_json}\n\n"
         "Return a JudgeScorecard JSON object grading the generated digest strictly against "
-        "the frozen input source articles."
+        "the frozen input source articles and any provided prior coverage context."
     )
 
     client = genai.Client()
@@ -99,8 +119,10 @@ async def evaluate_digest_with_judge(
                 )
                 await asyncio.sleep(delay)
     finally:
-        await client.aio.aclose()
-        client.close()
+        try:
+            await client.aio.aclose()
+        finally:
+            client.close()
 
     assert response is not None
 
