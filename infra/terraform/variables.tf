@@ -77,12 +77,18 @@ variable "critic_model" {
 }
 
 variable "monthly_budget_usd" {
-  description = "Monthly GCP billing budget cap in USD for alert notifications (matches $10/mo Google AI Pro credits)."
+  description = "Monthly GCP billing budget cap in your billing account's currency for alert notifications (default: 10)."
   type        = number
   default     = 10
 
   validation {
     condition     = var.monthly_budget_usd >= 1 && floor(var.monthly_budget_usd) == var.monthly_budget_usd
-    error_message = "monthly_budget_usd must be a whole number of at least 1 USD."
+    error_message = "monthly_budget_usd must be a whole number of at least 1."
   }
+}
+
+variable "budget_currency_code" {
+  description = "Optional ISO 4217 currency code (e.g., USD, CAD, EUR). Leave empty to automatically match your GCP billing account currency."
+  type        = string
+  default     = ""
 }
