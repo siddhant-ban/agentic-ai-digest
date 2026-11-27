@@ -37,7 +37,7 @@ resource "google_cloud_run_v2_job" "digest" {
 
         env {
           name  = "GOOGLE_CLOUD_LOCATION"
-          value = var.region
+          value = var.vertex_ai_location
         }
 
         env {

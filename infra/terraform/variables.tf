@@ -25,6 +25,17 @@ variable "region" {
   }
 }
 
+variable "vertex_ai_location" {
+  description = "Vertex AI endpoint location for Gemini and embedding models (Gemini 3.x publisher models are served on 'global')."
+  type        = string
+  default     = "global"
+
+  validation {
+    condition     = length(trimspace(var.vertex_ai_location)) > 0
+    error_message = "vertex_ai_location must be a non-empty Vertex AI location (e.g., 'global')."
+  }
+}
+
 variable "github_repo" {
   description = "GitHub repository in 'owner/repo' format allowed to deploy via keyless OIDC Workload Identity Federation."
   type        = string

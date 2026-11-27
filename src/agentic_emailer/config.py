@@ -48,7 +48,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GCP_PROJECT_ID", "GOOGLE_CLOUD_PROJECT", "gcp_project_id"),
     )
     gcp_location: str = Field(
-        default="us-central1",
+        default="global",
         validation_alias=AliasChoices("GCP_LOCATION", "GOOGLE_CLOUD_LOCATION", "gcp_location"),
     )
     gemini_api_key: str | None = Field(
