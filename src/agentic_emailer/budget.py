@@ -23,6 +23,8 @@ DEFAULT_MODEL_PRICING_USD_PER_1M: dict[str, tuple[float, float]] = {
     "gemini-3-flash-preview": (0.30, 2.50),
     "gemini-2.0-flash": (0.10, 0.40),
     "gemini-2.0-flash-lite": (0.075, 0.30),
+    "gemini-embedding-001": (0.15, 0.0),
+    "text-embedding-004": (0.025, 0.0),
 }
 FALLBACK_PRICING_USD_PER_1M: tuple[float, float] = (0.15, 0.60)
 
