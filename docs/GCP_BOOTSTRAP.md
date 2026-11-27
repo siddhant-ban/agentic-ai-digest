@@ -62,8 +62,8 @@ terraform -chdir=infra/terraform plan
 
 ```powershell
 terraform -chdir=infra/terraform apply `
-  -target=google_artifact_registry_repository.docker `
-  -target=google_secret_manager_secret.smtp_password
+  "-target=google_artifact_registry_repository.docker" `
+  "-target=google_secret_manager_secret.smtp_password"
 ```
 
 ### 3b. Push the Initial Container Image (Choose ONE Option)
