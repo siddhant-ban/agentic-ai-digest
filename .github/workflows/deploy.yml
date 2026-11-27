@@ -1,0 +1,73 @@
+name: Deploy to Cloud Run Job
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+  ARTIFACT_REGISTRY_REPO: agentic-emailer
+  CLOUD_RUN_JOB_NAME: agentic-digest-job
+
+jobs:
+  deploy:
+    name: Build, Push & Update Cloud Run Job (Keyless WIF)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify GCP repository variables are configured
+        run: |
+          missing=0
+          for var_name in GCP_PROJECT_ID GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOY_SA_EMAIL; do
+            if [ -z "${!var_name}" ]; then
+              echo "::error::Missing GitHub repository variable: ${var_name}. See docs/GCP_BOOTSTRAP.md."
+              missing=1
+            fi
+          done
+          exit "${missing}"
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_DEPLOY_SA_EMAIL: ${{ vars.GCP_DEPLOY_SA_EMAIL }}
+
+      - name: Authenticate to Google Cloud via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push container image
+        run: |
+          IMAGE_BASE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPO}/agentic-emailer"
+          docker build \
+            -t "${IMAGE_BASE}:${GITHUB_SHA}" \
+            -t "${IMAGE_BASE}:latest" \
+            .
+          docker push "${IMAGE_BASE}:${GITHUB_SHA}"
+          docker push "${IMAGE_BASE}:latest"
+
+      - name: Update Cloud Run Job image
+        run: |
+          IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REGISTRY_REPO}/agentic-emailer:${GITHUB_SHA}"
+          gcloud run jobs update "${CLOUD_RUN_JOB_NAME}" \
+            --image "${IMAGE_URI}" \
+            --region "${GCP_REGION}" \
+            --project "${GCP_PROJECT_ID}"

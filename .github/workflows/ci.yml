@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-and-invariants:
+    name: Code Quality, Invariants & Deterministic Evals
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests evals
+
+      - name: Type Check (mypy)
+        run: uv run mypy src evals
+
+      - name: Run Deterministic Invariants
+        run: uv run pytest -v
+
+      - name: Run Deterministic Offline Evals (Zero LLM Spend)
+        run: uv run agentic-emailer-eval --mode deterministic
+
+  terraform-validate:
+    name: Terraform Format & Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Format Check
+        run: terraform -chdir=infra/terraform fmt -check -recursive
+
+      - name: Terraform Init (No Backend)
+        run: terraform -chdir=infra/terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform -chdir=infra/terraform validate
+
+  docker-build-check:
+    name: Container Build & Non-Root Smoke Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build production container image
+        run: docker build -t agentic-emailer:ci .
+
+      - name: Verify image size and non-root execution
+        run: |
+          docker images agentic-emailer:ci --format "{{.Repository}}:{{.Tag}} {{.Size}}"
+          UID_OUT="$(docker run --rm --entrypoint id agentic-emailer:ci -u)"
+          echo "Container UID: ${UID_OUT}"
+          test "${UID_OUT}" = "10001"
+          docker run --rm agentic-emailer:ci --help
