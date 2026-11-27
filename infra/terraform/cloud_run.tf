@@ -27,7 +27,7 @@ resource "google_cloud_run_v2_job" "digest" {
 
         env {
           name  = "GOOGLE_GENAI_USE_VERTEXAI"
-          value = "true"
+          value = var.use_vertex_ai ? "true" : "false"
         }
 
         env {
@@ -84,6 +84,19 @@ resource "google_cloud_run_v2_job" "digest" {
             }
           }
         }
+
+        dynamic "env" {
+          for_each = var.use_vertex_ai ? [] : [1]
+          content {
+            name = "GEMINI_API_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = google_secret_manager_secret.gemini_api_key[0].secret_id
+                version = "latest"
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -98,6 +111,7 @@ resource "google_cloud_run_v2_job" "digest" {
   depends_on = [
     google_project_service.services["run.googleapis.com"],
     google_secret_manager_secret_iam_member.digest_runner_smtp_secret,
+    google_secret_manager_secret_iam_member.digest_runner_gemini_secret,
   ]
 }
 

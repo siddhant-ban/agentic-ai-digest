@@ -58,12 +58,13 @@ terraform -chdir=infra/terraform plan
 
 > **Why a two-step first apply?** When creating `agentic-digest-job`, Cloud Run Jobs validates that **both** the initial container image in Artifact Registry **and** a `latest` version of the `agentic-emailer-smtp-password` secret already exist. On a brand-new project, create the Artifact Registry repo and Secret Manager shell first, populate them out-of-band (so plaintext credentials never enter Terraform state), and then apply the full stack.
 
-### 3a. Enable APIs and Create Artifact Registry + Secret Manager Shell
+### 3a. Enable APIs and Create Artifact Registry + Secret Manager Shells
 
 ```powershell
 terraform -chdir=infra/terraform apply `
   "-target=google_artifact_registry_repository.docker" `
-  "-target=google_secret_manager_secret.smtp_password"
+  "-target=google_secret_manager_secret.smtp_password" `
+  "-target=google_secret_manager_secret.gemini_api_key"
 ```
 
 ### 3b. Push the Initial Container Image (Choose ONE Option)
@@ -79,12 +80,13 @@ gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/agenti
 # docker push us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/agentic-emailer/agentic-emailer:latest
 ```
 
-### 3c. Add the SMTP Password Secret Version (Out-of-Band)
+### 3c. Add Secret Versions (Out-of-Band)
 
-Add your Gmail App Password directly to Secret Manager so plaintext credentials never touch Terraform state:
+Add your Gmail App Password (and your Google AI Studio `GEMINI_API_KEY` when using the default `use_vertex_ai = false`) directly to Secret Manager so plaintext credentials never touch Terraform state:
 
 **PowerShell (writes exact UTF-8 bytes without trailing CRLF):**
 ```powershell
+# 1) SMTP password
 $pw = Read-Host "Enter Gmail App Password" -AsSecureString
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw)
 $tmp = [System.IO.Path]::GetTempFileName()
@@ -97,14 +99,26 @@ try {
     Remove-Item $tmp -Force -ErrorAction SilentlyContinue
     $plain = $null
 }
+
+# 2) Gemini API key (required when use_vertex_ai = false, the default)
+$key = (Get-Content gemini_api_key.txt -Raw).Trim()
+$tmp = [System.IO.Path]::GetTempFileName()
+try {
+    [System.IO.File]::WriteAllText($tmp, $key)
+    gcloud secrets versions add agentic-emailer-gemini-api-key --data-file=$tmp
+} finally {
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    $key = $null
+}
 ```
 
 **macOS / Linux (bash):**
 ```bash
 printf '%s' "YOUR_GMAIL_APP_PASSWORD" | gcloud secrets versions add agentic-emailer-smtp-password --data-file=-
+printf '%s' "YOUR_GEMINI_API_KEY" | gcloud secrets versions add agentic-emailer-gemini-api-key --data-file=-
 ```
 
-> **Always Free Guardrail (<= 6 Active Secret Versions):** When rotating your SMTP password in the future, destroy old versions (`gcloud secrets versions destroy <VERSION> --secret=agentic-emailer-smtp-password`) so total active versions remain `<= 6`.
+> **Always Free Guardrail (<= 6 Active Secret Versions):** With both secrets active (2 versions total), you remain well under the 6-version Always Free limit. When rotating either secret, destroy old versions (`gcloud secrets versions destroy <VERSION> --secret=<SECRET_ID>`) so total active versions remain `<= 6`.
 
 ---
 

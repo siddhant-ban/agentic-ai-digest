@@ -79,12 +79,26 @@ resource "google_firestore_database" "default" {
   depends_on = [google_project_service.services["firestore.googleapis.com"]]
 }
 
-# Secret Manager shell for SMTP password ONLY (Vertex AI uses IAM, not API keys).
+# Secret Manager shell for SMTP password.
 # Add the secret version out-of-band via `gcloud secrets versions add` so plaintext
-# credentials never touch Terraform state. Keep <= 6 active versions for Always Free.
+# credentials never touch Terraform state. Keep <= 6 active versions total for Always Free.
 resource "google_secret_manager_secret" "smtp_password" {
   project   = var.project_id
   secret_id = "agentic-emailer-smtp-password"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.services["secretmanager.googleapis.com"]]
+}
+
+# Secret Manager shell for Google AI Studio GEMINI_API_KEY (used when var.use_vertex_ai = false).
+# Add the secret version out-of-band via `gcloud secrets versions add` before applying Cloud Run Job.
+resource "google_secret_manager_secret" "gemini_api_key" {
+  count     = var.use_vertex_ai ? 0 : 1
+  project   = var.project_id
+  secret_id = "agentic-emailer-gemini-api-key"
 
   replication {
     auto {}

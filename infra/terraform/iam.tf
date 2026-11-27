@@ -34,6 +34,15 @@ resource "google_secret_manager_secret_iam_member" "digest_runner_smtp_secret" {
   member    = "serviceAccount:${google_service_account.digest_runner.email}"
 }
 
+# Scoped access to ONLY the Gemini API key secret when using Gemini API mode (var.use_vertex_ai = false).
+resource "google_secret_manager_secret_iam_member" "digest_runner_gemini_secret" {
+  count     = var.use_vertex_ai ? 0 : 1
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.gemini_api_key[0].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.digest_runner.email}"
+}
+
 
 # --- 2. Scheduler Invoker Service Account (Cloud Scheduler -> Cloud Run Job) ---
 # Scoped roles/run.invoker is bound directly on the Cloud Run Job in cloud_run.tf.

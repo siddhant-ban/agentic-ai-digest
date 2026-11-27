@@ -25,6 +25,12 @@ variable "region" {
   }
 }
 
+variable "use_vertex_ai" {
+  description = "When true, authenticate Gemini calls via Vertex AI IAM (requires an eligible paid Cloud Billing account). When false, mount GEMINI_API_KEY from Secret Manager."
+  type        = bool
+  default     = false
+}
+
 variable "vertex_ai_location" {
   description = "Vertex AI endpoint location for Gemini and embedding models (Gemini 3.x publisher models are served on 'global')."
   type        = string
